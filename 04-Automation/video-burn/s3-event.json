@@ -1,0 +1,10 @@
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": { "name": "vfx-modelado-output" },
+        "object": { "key": "modelado/test_hd.mp4" }
+      }
+    }
+  ]
+}
