@@ -6,6 +6,7 @@ from boto3.dynamodb.conditions import Key
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 DEPT_PREFIX = os.environ.get("DEPT_PREFIX", "MOD")
+DEPARTMENT_NAME = os.environ.get("DEPARTMENT_NAME", "modelado")
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
@@ -38,7 +39,7 @@ def lambda_handler(event, context):
             "asset_id": asset_id,
             "version": new_version,
             "file_name": file_name,
-            "department": "modelado",
+            "department": DEPARTMENT_NAME,
             "uploaded_by": uploaded_by,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "approval_status": "pendiente_revision",

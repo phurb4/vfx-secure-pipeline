@@ -151,8 +151,9 @@ resource "aws_lambda_function" "modelado_version_namer" {
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.modelado_metadata.name
-      DEPT_PREFIX = "MOD"
+      TABLE_NAME      = data.aws_dynamodb_table.modelado_metadata.name
+      DEPT_PREFIX     = "MOD"
+      DEPARTMENT_NAME = "modelado"
     }
   }
 
@@ -200,6 +201,11 @@ resource "aws_iam_role_policy" "sfn_modelado_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.modelado_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -426,15 +432,16 @@ data "archive_file" "texturing_version_namer_zip" {
 resource "aws_lambda_function" "texturing_version_namer" {
   function_name = "vfx-texturing-version-namer"
   role          = aws_iam_role.lambda_texturing_role.arn
-  handler       = "lambda_function.lambda_handler"
+  handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
   filename         = data.archive_file.texturing_version_namer_zip.output_path
   source_code_hash = data.archive_file.texturing_version_namer_zip.output_base64sha256
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.texturing_metadata.name
-      DEPT_PREFIX = "TEX"
+      TABLE_NAME      = data.aws_dynamodb_table.texturing_metadata.name
+      DEPT_PREFIX     = "TEX"
+      DEPARTMENT_NAME = "texturing"
     }
   }
 }
@@ -468,6 +475,11 @@ resource "aws_iam_role_policy" "sfn_texturing_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.texturing_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -483,17 +495,29 @@ resource "aws_sfn_state_machine" "texturing_aprobacion" {
     States = {
       AsignarVersion = {
         Type     = "Task"
-        Resource = aws_lambda_function.texturing_version_namer.arn
-        Next     = "NotificarSupervisor"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.texturing_version_namer.arn
+          "Payload.$"  = "$"
+        }
+        ResultSelector = {
+          "asset_id.$"  = "$.Payload.asset_id"
+          "version.$"   = "$.Payload.version"
+          "file_name.$" = "$.Payload.file_name"
+        }
+        ResultPath = "$.asset"
+        Next       = "NotificarSupervisor"
       }
       NotificarSupervisor = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
           TopicArn    = aws_sns_topic.texturing_aprobaciones.arn
-          "Message.$" = "$.mensaje"
+          Subject     = "Nuevo asset de Texturing para revision"
+          "Message.$" = "States.Format('Asset listo para revision: {} (subido por {})', $.asset.file_name, $.uploaded_by)"
         }
-        Next = "EvaluarDecision"
+        ResultPath = null
+        Next       = "EvaluarDecision"
       }
       EvaluarDecision = {
         Type = "Choice"
@@ -501,37 +525,78 @@ resource "aws_sfn_state_machine" "texturing_aprobacion" {
           {
             Variable     = "$.decision"
             StringEquals = "aprobado"
-            Next         = "NotificarAprobado"
+            Next         = "GrabarAprobado"
           },
           {
             Variable     = "$.decision"
             StringEquals = "rechazado"
-            Next         = "NotificarRechazado"
+            Next         = "GrabarRechazado"
           }
         ]
         Default = "DecisionInvalida"
+      }
+      GrabarAprobado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.texturing_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "aprobado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarAprobado"
       }
       NotificarAprobado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.texturing_aprobaciones.arn
-          Message  = "Asset aprobado en Texturing"
+          TopicArn    = aws_sns_topic.texturing_aprobaciones.arn
+          Subject     = "Asset de Texturing aprobado"
+          "Message.$" = "States.Format('Aprobado: {}. Listo para pasar al siguiente departamento.', $.asset.file_name)"
         }
         End = true
+      }
+      GrabarRechazado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.texturing_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "rechazado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarRechazado"
       }
       NotificarRechazado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.texturing_aprobaciones.arn
-          Message  = "Asset rechazado en Texturing"
+          TopicArn    = aws_sns_topic.texturing_aprobaciones.arn
+          Subject     = "Asset de Texturing rechazado"
+          "Message.$" = "States.Format('Rechazado: {}. Vuelve al artista para correccion.', $.asset.file_name)"
         }
         End = true
       }
       DecisionInvalida = {
         Type  = "Fail"
         Error = "DecisionInvalida"
+        Cause = "El campo decision debe ser aprobado o rechazado"
       }
     }
   })
@@ -590,15 +655,17 @@ data "archive_file" "rigging_version_namer_zip" {
 resource "aws_lambda_function" "rigging_version_namer" {
   function_name = "vfx-rigging-version-namer"
   role          = aws_iam_role.lambda_rigging_role.arn
-  handler       = "lambda_function.lambda_handler"
+  handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
   filename         = data.archive_file.rigging_version_namer_zip.output_path
   source_code_hash = data.archive_file.rigging_version_namer_zip.output_base64sha256
+  
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.rigging_metadata.name
-      DEPT_PREFIX = "RIG"
+      TABLE_NAME      = data.aws_dynamodb_table.rigging_metadata.name
+      DEPT_PREFIX     = "RIG"
+      DEPARTMENT_NAME = "rigging"
     }
   }
 }
@@ -632,6 +699,11 @@ resource "aws_iam_role_policy" "sfn_rigging_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.rigging_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -647,17 +719,29 @@ resource "aws_sfn_state_machine" "rigging_aprobacion" {
     States = {
       AsignarVersion = {
         Type     = "Task"
-        Resource = aws_lambda_function.rigging_version_namer.arn
-        Next     = "NotificarSupervisor"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.rigging_version_namer.arn
+          "Payload.$"  = "$"
+        }
+        ResultSelector = {
+          "asset_id.$"  = "$.Payload.asset_id"
+          "version.$"   = "$.Payload.version"
+          "file_name.$" = "$.Payload.file_name"
+        }
+        ResultPath = "$.asset"
+        Next       = "NotificarSupervisor"
       }
       NotificarSupervisor = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
           TopicArn    = aws_sns_topic.rigging_aprobaciones.arn
-          "Message.$" = "$.mensaje"
+          Subject     = "Nuevo asset de Rigging para revision"
+          "Message.$" = "States.Format('Asset listo para revision: {} (subido por {})', $.asset.file_name, $.uploaded_by)"
         }
-        Next = "EvaluarDecision"
+        ResultPath = null
+        Next       = "EvaluarDecision"
       }
       EvaluarDecision = {
         Type = "Choice"
@@ -665,37 +749,78 @@ resource "aws_sfn_state_machine" "rigging_aprobacion" {
           {
             Variable     = "$.decision"
             StringEquals = "aprobado"
-            Next         = "NotificarAprobado"
+            Next         = "GrabarAprobado"
           },
           {
             Variable     = "$.decision"
             StringEquals = "rechazado"
-            Next         = "NotificarRechazado"
+            Next         = "GrabarRechazado"
           }
         ]
         Default = "DecisionInvalida"
+      }
+      GrabarAprobado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.rigging_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "aprobado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarAprobado"
       }
       NotificarAprobado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.rigging_aprobaciones.arn
-          Message  = "Asset aprobado en Rigging"
+          TopicArn    = aws_sns_topic.rigging_aprobaciones.arn
+          Subject     = "Asset de Rigging aprobado"
+          "Message.$" = "States.Format('Aprobado: {}. Listo para pasar al siguiente departamento.', $.asset.file_name)"
         }
         End = true
+      }
+      GrabarRechazado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.rigging_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "rechazado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarRechazado"
       }
       NotificarRechazado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.rigging_aprobaciones.arn
-          Message  = "Asset rechazado en Rigging"
+          TopicArn    = aws_sns_topic.rigging_aprobaciones.arn
+          Subject     = "Asset de Rigging rechazado"
+          "Message.$" = "States.Format('Rechazado: {}. Vuelve al artista para correccion.', $.asset.file_name)"
         }
         End = true
       }
       DecisionInvalida = {
         Type  = "Fail"
         Error = "DecisionInvalida"
+        Cause = "El campo decision debe ser aprobado o rechazado"
       }
     }
   })
@@ -754,15 +879,16 @@ data "archive_file" "animation_version_namer_zip" {
 resource "aws_lambda_function" "animation_version_namer" {
   function_name = "vfx-animation-version-namer"
   role          = aws_iam_role.lambda_animation_role.arn
-  handler       = "lambda_function.lambda_handler"
+  handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
   filename         = data.archive_file.animation_version_namer_zip.output_path
   source_code_hash = data.archive_file.animation_version_namer_zip.output_base64sha256
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.animation_metadata.name
-      DEPT_PREFIX = "ANIM"
+      TABLE_NAME      = data.aws_dynamodb_table.animation_metadata.name
+      DEPT_PREFIX     = "ANIM"
+      DEPARTMENT_NAME = "animation"
     }
   }
 }
@@ -796,6 +922,11 @@ resource "aws_iam_role_policy" "sfn_animation_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.animation_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -811,17 +942,29 @@ resource "aws_sfn_state_machine" "animation_aprobacion" {
     States = {
       AsignarVersion = {
         Type     = "Task"
-        Resource = aws_lambda_function.animation_version_namer.arn
-        Next     = "NotificarSupervisor"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.animation_version_namer.arn
+          "Payload.$"  = "$"
+        }
+        ResultSelector = {
+          "asset_id.$"  = "$.Payload.asset_id"
+          "version.$"   = "$.Payload.version"
+          "file_name.$" = "$.Payload.file_name"
+        }
+        ResultPath = "$.asset"
+        Next       = "NotificarSupervisor"
       }
       NotificarSupervisor = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
           TopicArn    = aws_sns_topic.animation_aprobaciones.arn
-          "Message.$" = "$.mensaje"
+          Subject     = "Nuevo asset de Animation para revision"
+          "Message.$" = "States.Format('Asset listo para revision: {} (subido por {})', $.asset.file_name, $.uploaded_by)"
         }
-        Next = "EvaluarDecision"
+        ResultPath = null
+        Next       = "EvaluarDecision"
       }
       EvaluarDecision = {
         Type = "Choice"
@@ -829,37 +972,78 @@ resource "aws_sfn_state_machine" "animation_aprobacion" {
           {
             Variable     = "$.decision"
             StringEquals = "aprobado"
-            Next         = "NotificarAprobado"
+            Next         = "GrabarAprobado"
           },
           {
             Variable     = "$.decision"
             StringEquals = "rechazado"
-            Next         = "NotificarRechazado"
+            Next         = "GrabarRechazado"
           }
         ]
         Default = "DecisionInvalida"
+      }
+      GrabarAprobado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.animation_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "aprobado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarAprobado"
       }
       NotificarAprobado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.animation_aprobaciones.arn
-          Message  = "Asset aprobado en Animation"
+          TopicArn    = aws_sns_topic.animation_aprobaciones.arn
+          Subject     = "Asset de Animation aprobado"
+          "Message.$" = "States.Format('Aprobado: {}. Listo para pasar al siguiente departamento.', $.asset.file_name)"
         }
         End = true
+      }
+      GrabarRechazado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.animation_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "rechazado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarRechazado"
       }
       NotificarRechazado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.animation_aprobaciones.arn
-          Message  = "Asset rechazado en Animation"
+          TopicArn    = aws_sns_topic.animation_aprobaciones.arn
+          Subject     = "Asset de Animation rechazado"
+          "Message.$" = "States.Format('Rechazado: {}. Vuelve al artista para correccion.', $.asset.file_name)"
         }
         End = true
       }
       DecisionInvalida = {
         Type  = "Fail"
         Error = "DecisionInvalida"
+        Cause = "El campo decision debe ser aprobado o rechazado"
       }
     }
   })
@@ -925,15 +1109,16 @@ data "archive_file" "fx_version_namer_zip" {
 resource "aws_lambda_function" "fx_version_namer" {
   function_name = "vfx-fx-version-namer"
   role          = aws_iam_role.lambda_fx_role.arn
-  handler       = "lambda_function.lambda_handler"
+  handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
   filename         = data.archive_file.fx_version_namer_zip.output_path
   source_code_hash = data.archive_file.fx_version_namer_zip.output_base64sha256
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.fx_metadata.name
-      DEPT_PREFIX = "FX"
+      TABLE_NAME      = data.aws_dynamodb_table.fx_metadata.name
+      DEPT_PREFIX     = "FX"
+      DEPARTMENT_NAME = "fx"
     }
   }
 }
@@ -967,6 +1152,11 @@ resource "aws_iam_role_policy" "sfn_fx_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.fx_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -982,17 +1172,29 @@ resource "aws_sfn_state_machine" "fx_aprobacion" {
     States = {
       AsignarVersion = {
         Type     = "Task"
-        Resource = aws_lambda_function.fx_version_namer.arn
-        Next     = "NotificarSupervisor"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.fx_version_namer.arn
+          "Payload.$"  = "$"
+        }
+        ResultSelector = {
+          "asset_id.$"  = "$.Payload.asset_id"
+          "version.$"   = "$.Payload.version"
+          "file_name.$" = "$.Payload.file_name"
+        }
+        ResultPath = "$.asset"
+        Next       = "NotificarSupervisor"
       }
       NotificarSupervisor = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
           TopicArn    = aws_sns_topic.fx_aprobaciones.arn
-          "Message.$" = "$.mensaje"
+          Subject     = "Nuevo asset de FX para revision"
+          "Message.$" = "States.Format('Asset listo para revision: {} (subido por {})', $.asset.file_name, $.uploaded_by)"
         }
-        Next = "EvaluarDecision"
+        ResultPath = null
+        Next       = "EvaluarDecision"
       }
       EvaluarDecision = {
         Type = "Choice"
@@ -1000,37 +1202,78 @@ resource "aws_sfn_state_machine" "fx_aprobacion" {
           {
             Variable     = "$.decision"
             StringEquals = "aprobado"
-            Next         = "NotificarAprobado"
+            Next         = "GrabarAprobado"
           },
           {
             Variable     = "$.decision"
             StringEquals = "rechazado"
-            Next         = "NotificarRechazado"
+            Next         = "GrabarRechazado"
           }
         ]
         Default = "DecisionInvalida"
+      }
+      GrabarAprobado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.fx_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "aprobado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarAprobado"
       }
       NotificarAprobado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.fx_aprobaciones.arn
-          Message  = "Asset aprobado en FX"
+          TopicArn    = aws_sns_topic.fx_aprobaciones.arn
+          Subject     = "Asset de FX aprobado"
+          "Message.$" = "States.Format('Aprobado: {}. Listo para pasar al siguiente departamento.', $.asset.file_name)"
         }
         End = true
+      }
+      GrabarRechazado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.fx_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "rechazado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarRechazado"
       }
       NotificarRechazado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.fx_aprobaciones.arn
-          Message  = "Asset rechazado en FX"
+          TopicArn    = aws_sns_topic.fx_aprobaciones.arn
+          Subject     = "Asset de FX rechazado"
+          "Message.$" = "States.Format('Rechazado: {}. Vuelve al artista para correccion.', $.asset.file_name)"
         }
         End = true
       }
       DecisionInvalida = {
         Type  = "Fail"
         Error = "DecisionInvalida"
+        Cause = "El campo decision debe ser aprobado o rechazado"
       }
     }
   })
@@ -1096,15 +1339,16 @@ data "archive_file" "compositing_version_namer_zip" {
 resource "aws_lambda_function" "compositing_version_namer" {
   function_name = "vfx-compositing-version-namer"
   role          = aws_iam_role.lambda_compositing_role.arn
-  handler       = "lambda_function.lambda_handler"
+  handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
   filename         = data.archive_file.compositing_version_namer_zip.output_path
   source_code_hash = data.archive_file.compositing_version_namer_zip.output_base64sha256
 
   environment {
     variables = {
-      TABLE_NAME  = data.aws_dynamodb_table.compositing_metadata.name
-      DEPT_PREFIX = "COMP"
+      TABLE_NAME      = data.aws_dynamodb_table.compositing_metadata.name
+      DEPT_PREFIX     = "COMP"
+      DEPARTMENT_NAME = "compositing"
     }
   }
 }
@@ -1138,6 +1382,11 @@ resource "aws_iam_role_policy" "sfn_compositing_policy" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.compositing_aprobaciones.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:UpdateItem"]
+        Resource = data.aws_dynamodb_table.modelado_metadata.arn
       }
     ]
   })
@@ -1153,17 +1402,29 @@ resource "aws_sfn_state_machine" "compositing_aprobacion" {
     States = {
       AsignarVersion = {
         Type     = "Task"
-        Resource = aws_lambda_function.compositing_version_namer.arn
-        Next     = "NotificarSupervisor"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = aws_lambda_function.compositing_version_namer.arn
+          "Payload.$"  = "$"
+        }
+        ResultSelector = {
+          "asset_id.$"  = "$.Payload.asset_id"
+          "version.$"   = "$.Payload.version"
+          "file_name.$" = "$.Payload.file_name"
+        }
+        ResultPath = "$.asset"
+        Next       = "NotificarSupervisor"
       }
       NotificarSupervisor = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
           TopicArn    = aws_sns_topic.compositing_aprobaciones.arn
-          "Message.$" = "$.mensaje"
+          Subject     = "Nuevo asset de Compositing para revision"
+          "Message.$" = "States.Format('Asset listo para revision: {} (subido por {})', $.asset.file_name, $.uploaded_by)"
         }
-        Next = "EvaluarDecision"
+        ResultPath = null
+        Next       = "EvaluarDecision"
       }
       EvaluarDecision = {
         Type = "Choice"
@@ -1171,37 +1432,78 @@ resource "aws_sfn_state_machine" "compositing_aprobacion" {
           {
             Variable     = "$.decision"
             StringEquals = "aprobado"
-            Next         = "NotificarAprobado"
+            Next         = "GrabarAprobado"
           },
           {
             Variable     = "$.decision"
             StringEquals = "rechazado"
-            Next         = "NotificarRechazado"
+            Next         = "GrabarRechazado"
           }
         ]
         Default = "DecisionInvalida"
+      }
+      GrabarAprobado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.compositing_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "aprobado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarAprobado"
       }
       NotificarAprobado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.compositing_aprobaciones.arn
-          Message  = "Asset aprobado en Compositing"
+          TopicArn    = aws_sns_topic.compositing_aprobaciones.arn
+          Subject     = "Asset de Compositing aprobado"
+          "Message.$" = "States.Format('Aprobado: {}. Listo para pasar al siguiente departamento.', $.asset.file_name)"
         }
         End = true
+      }
+      GrabarRechazado = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = data.aws_dynamodb_table.compositing_metadata.name
+          Key = {
+            asset_id = { "S.$" = "$.asset.asset_id" }
+            version  = { "S.$" = "$.asset.version" }
+          }
+          UpdateExpression = "SET approval_status = :estado, reviewed_by = :revisor, reviewed_at = :momento"
+          ExpressionAttributeValues = {
+            ":estado"  = { "S" = "rechazado" }
+            ":revisor" = { "S.$" = "$.reviewed_by" }
+            ":momento" = { "S.$" = "$$.State.EnteredTime" }
+          }
+        }
+        ResultPath = null
+        Next       = "NotificarRechazado"
       }
       NotificarRechazado = {
         Type     = "Task"
         Resource = "arn:aws:states:::sns:publish"
         Parameters = {
-          TopicArn = aws_sns_topic.compositing_aprobaciones.arn
-          Message  = "Asset rechazado en Compositing"
+          TopicArn    = aws_sns_topic.compositing_aprobaciones.arn
+          Subject     = "Asset de Compositing rechazado"
+          "Message.$" = "States.Format('Rechazado: {}. Vuelve al artista para correccion.', $.asset.file_name)"
         }
         End = true
       }
       DecisionInvalida = {
         Type  = "Fail"
         Error = "DecisionInvalida"
+        Cause = "El campo decision debe ser aprobado o rechazado"
       }
     }
   })

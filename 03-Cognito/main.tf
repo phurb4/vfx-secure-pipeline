@@ -206,9 +206,30 @@ data "aws_iam_policy_document" "artista_policy" {
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input/*",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output/*",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies/*",
     ]
+  }
+
+  statement {
+    sid       = "ABACDailiesListarSoloSuCarpeta"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::vfx-dailies"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["$${aws:PrincipalTag/departamento}/*"]
+    }
+  }
+
+  statement {
+    sid    = "ABACDailiesObjetosSoloSuCarpeta"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["arn:aws:s3:::vfx-dailies/$${aws:PrincipalTag/departamento}/*"]
   }
 
   statement {
@@ -293,9 +314,30 @@ data "aws_iam_policy_document" "lead_policy" {
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input/*",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output/*",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies/*",
     ]
+  }
+
+  statement {
+    sid       = "ABACDailiesListarSoloSuCarpeta"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::vfx-dailies"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["$${aws:PrincipalTag/departamento}/*"]
+    }
+  }
+
+  statement {
+    sid    = "ABACDailiesObjetosSoloSuCarpeta"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["arn:aws:s3:::vfx-dailies/$${aws:PrincipalTag/departamento}/*"]
   }
 
   statement {
@@ -374,9 +416,31 @@ data "aws_iam_policy_document" "supervisor_departamento_policy" {
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input/*",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output",
       "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output/*",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-dailies/*",
     ]
+  }
+
+  statement {
+    sid       = "ABACDailiesListarSoloSuCarpeta"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::vfx-dailies"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["$${aws:PrincipalTag/departamento}/*"]
+    }
+  }
+
+  statement {
+    sid    = "ABACDailiesObjetosSoloSuCarpeta"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = ["arn:aws:s3:::vfx-dailies/$${aws:PrincipalTag/departamento}/*"]
   }
 
   statement {
@@ -762,7 +826,7 @@ resource "aws_iam_user" "prueba_artista_animacion" {
   name = "prueba-artista-animacion"
 
   tags = {
-    departamento = "animacion"
+    departamento = "animation"
     rol          = "artista"
     proyecto     = "pipeline-vfx"
   }
