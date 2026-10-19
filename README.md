@@ -8,6 +8,8 @@ Built with Terraform on AWS, tested first against a local AWS emulator (Floci: h
 A VFX studio needs to move an asset from the moment an artist uploads it to the moment a client approves the final delivery, across six production departments: 
 Modeling, Texturing, Rigging, Animation, FX, and Compositing, followed by Final Render and Client Review. 
 This repository implements that entire flow as versioned infrastructure code, with identity, network, and audit controls layered on top rather than bolted on afterward.
+I designed the architecture and made every decision in this repository myself, but I’m new to writing infrastructure code.
+I used Claude AI to generate the Terraform code and commands, which I then ran, tested, and debugged myself against Floci before anything touched AWS.
 
 ## Architecture overview
 
