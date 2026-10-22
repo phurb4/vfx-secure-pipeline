@@ -386,7 +386,7 @@ resource "aws_sns_topic" "texturing_aprobaciones" {
 resource "aws_sns_topic_subscription" "texturing_supervisor_email" {
   topic_arn = aws_sns_topic.texturing_aprobaciones.arn
   protocol  = "email"
-  endpoint  = "supervisor@vfxstudio.com"
+  endpoint  = var.alert_email
 }
 
 resource "aws_iam_role" "lambda_texturing_role" {
@@ -416,8 +416,16 @@ resource "aws_iam_role_policy" "lambda_texturing_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-texturing-version-namer:*"
       }
     ]
   })
@@ -434,6 +442,7 @@ resource "aws_lambda_function" "texturing_version_namer" {
   role          = aws_iam_role.lambda_texturing_role.arn
   handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
+  timeout       = 15
   filename         = data.archive_file.texturing_version_namer_zip.output_path
   source_code_hash = data.archive_file.texturing_version_namer_zip.output_base64sha256
 
@@ -443,6 +452,10 @@ resource "aws_lambda_function" "texturing_version_namer" {
       DEPT_PREFIX     = "TEX"
       DEPARTMENT_NAME = "texturing"
     }
+  }
+    tags = {
+    departamento = "texturing"
+    proyecto     = "pipeline-vfx"
   }
 }
 
@@ -479,7 +492,7 @@ resource "aws_iam_role_policy" "sfn_texturing_policy" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
-        Resource = data.aws_dynamodb_table.modelado_metadata.arn
+        Resource = data.aws_dynamodb_table.texturing_metadata.arn
       }
     ]
   })
@@ -609,7 +622,7 @@ resource "aws_sns_topic" "rigging_aprobaciones" {
 resource "aws_sns_topic_subscription" "rigging_supervisor_email" {
   topic_arn = aws_sns_topic.rigging_aprobaciones.arn
   protocol  = "email"
-  endpoint  = "supervisor@vfxstudio.com"
+    endpoint  = var.alert_email
 }
 
 resource "aws_iam_role" "lambda_rigging_role" {
@@ -639,8 +652,16 @@ resource "aws_iam_role_policy" "lambda_rigging_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-rigging-version-namer:*"
       }
     ]
   })
@@ -657,6 +678,7 @@ resource "aws_lambda_function" "rigging_version_namer" {
   role          = aws_iam_role.lambda_rigging_role.arn
   handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
+  timeout = 15
   filename         = data.archive_file.rigging_version_namer_zip.output_path
   source_code_hash = data.archive_file.rigging_version_namer_zip.output_base64sha256
   
@@ -667,6 +689,10 @@ resource "aws_lambda_function" "rigging_version_namer" {
       DEPT_PREFIX     = "RIG"
       DEPARTMENT_NAME = "rigging"
     }
+  }
+    tags = {
+    departamento = "rigging"
+    proyecto     = "pipeline-vfx"
   }
 }
 
@@ -703,7 +729,7 @@ resource "aws_iam_role_policy" "sfn_rigging_policy" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
-        Resource = data.aws_dynamodb_table.modelado_metadata.arn
+        Resource = data.aws_dynamodb_table.rigging_metadata.arn
       }
     ]
   })
@@ -833,7 +859,7 @@ resource "aws_sns_topic" "animation_aprobaciones" {
 resource "aws_sns_topic_subscription" "animation_supervisor_email" {
   topic_arn = aws_sns_topic.animation_aprobaciones.arn
   protocol  = "email"
-  endpoint  = "supervisor@vfxstudio.com"
+  endpoint  = var.alert_email
 }
 
 resource "aws_iam_role" "lambda_animation_role" {
@@ -863,8 +889,16 @@ resource "aws_iam_role_policy" "lambda_animation_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-animation-version-namer:*"
       }
     ]
   })
@@ -881,6 +915,7 @@ resource "aws_lambda_function" "animation_version_namer" {
   role          = aws_iam_role.lambda_animation_role.arn
   handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
+  timeout       = 15
   filename         = data.archive_file.animation_version_namer_zip.output_path
   source_code_hash = data.archive_file.animation_version_namer_zip.output_base64sha256
 
@@ -890,6 +925,10 @@ resource "aws_lambda_function" "animation_version_namer" {
       DEPT_PREFIX     = "ANIM"
       DEPARTMENT_NAME = "animation"
     }
+  }
+    tags = {
+    departamento = "animation"
+    proyecto     = "pipeline-vfx"
   }
 }
 
@@ -926,7 +965,7 @@ resource "aws_iam_role_policy" "sfn_animation_policy" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
-        Resource = data.aws_dynamodb_table.modelado_metadata.arn
+        Resource = data.aws_dynamodb_table.animation_metadata.arn
       }
     ]
   })
@@ -1063,7 +1102,7 @@ resource "aws_sns_topic" "fx_aprobaciones" {
 resource "aws_sns_topic_subscription" "fx_supervisor_email" {
   topic_arn = aws_sns_topic.fx_aprobaciones.arn
   protocol  = "email"
-  endpoint  = "supervisor@vfxstudio.com"
+  endpoint  = var.alert_email
 }
 
 resource "aws_iam_role" "lambda_fx_role" {
@@ -1093,8 +1132,16 @@ resource "aws_iam_role_policy" "lambda_fx_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-fx-version-namer:*"
       }
     ]
   })
@@ -1111,6 +1158,7 @@ resource "aws_lambda_function" "fx_version_namer" {
   role          = aws_iam_role.lambda_fx_role.arn
   handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
+  timeout       = 15
   filename         = data.archive_file.fx_version_namer_zip.output_path
   source_code_hash = data.archive_file.fx_version_namer_zip.output_base64sha256
 
@@ -1120,6 +1168,10 @@ resource "aws_lambda_function" "fx_version_namer" {
       DEPT_PREFIX     = "FX"
       DEPARTMENT_NAME = "fx"
     }
+  }
+    tags = {
+    departamento = "fx"
+    proyecto     = "pipeline-vfx"
   }
 }
 
@@ -1156,7 +1208,7 @@ resource "aws_iam_role_policy" "sfn_fx_policy" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
-        Resource = data.aws_dynamodb_table.modelado_metadata.arn
+        Resource = data.aws_dynamodb_table.fx_metadata.arn
       }
     ]
   })
@@ -1293,7 +1345,7 @@ resource "aws_sns_topic" "compositing_aprobaciones" {
 resource "aws_sns_topic_subscription" "compositing_supervisor_email" {
   topic_arn = aws_sns_topic.compositing_aprobaciones.arn
   protocol  = "email"
-  endpoint  = "supervisor@vfxstudio.com"
+  endpoint  = var.alert_email
 }
 
 resource "aws_iam_role" "lambda_compositing_role" {
@@ -1323,8 +1375,16 @@ resource "aws_iam_role_policy" "lambda_compositing_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogGroup"]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-compositing-version-namer:*"
       }
     ]
   })
@@ -1341,6 +1401,7 @@ resource "aws_lambda_function" "compositing_version_namer" {
   role          = aws_iam_role.lambda_compositing_role.arn
   handler       = "version_namer.lambda_handler"
   runtime       = "python3.12"
+  timeout       = 15
   filename         = data.archive_file.compositing_version_namer_zip.output_path
   source_code_hash = data.archive_file.compositing_version_namer_zip.output_base64sha256
 
@@ -1350,6 +1411,10 @@ resource "aws_lambda_function" "compositing_version_namer" {
       DEPT_PREFIX     = "COMP"
       DEPARTMENT_NAME = "compositing"
     }
+  }
+    tags = {
+    departamento = "compositing"
+    proyecto     = "pipeline-vfx"
   }
 }
 
@@ -1386,7 +1451,7 @@ resource "aws_iam_role_policy" "sfn_compositing_policy" {
       {
         Effect   = "Allow"
         Action   = ["dynamodb:UpdateItem"]
-        Resource = data.aws_dynamodb_table.modelado_metadata.arn
+        Resource = data.aws_dynamodb_table.compositing_metadata.arn
       }
     ]
   })
