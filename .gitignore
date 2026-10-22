@@ -11,7 +11,7 @@ crash.*.log
 
 # Archivos de salida de ffmpeg
 ffmpegs/
-04-Automation/layers/*.zip
+**/*.zip
 
 # Ignore private key files
 08-ClientReview/cloudfront_private_key.pem

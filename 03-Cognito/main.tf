@@ -27,6 +27,14 @@ provider "aws" {
     lambda     = "http://localhost:4566"
     events     = "http://localhost:4566"
     sns        = "http://localhost:4566"
+    ec2        = "http://localhost:4566"
+  }
+}
+
+data "aws_vpc" "vfx_vpc" {
+  filter {
+    name   = "cidr-block"
+    values = ["10.0.0.0/16"]
   }
 }
 
@@ -187,9 +195,21 @@ data "aws_iam_policy_document" "artista_policy" {
     resources = ["*"]
 
     condition {
-      test     = "NotIpAddress"
+      test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
       values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "NotIpAddressIfExists"
+      variable = "aws:VpcSourceIp"
+      values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "StringNotEqualsIfExists"
+      variable = "aws:SourceVpc"
+      values   = [data.aws_vpc.vfx_vpc.id]
     }
   }
 
@@ -295,9 +315,21 @@ data "aws_iam_policy_document" "lead_policy" {
     resources = ["*"]
 
     condition {
-      test     = "NotIpAddress"
+      test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
       values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "NotIpAddressIfExists"
+      variable = "aws:VpcSourceIp"
+      values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "StringNotEqualsIfExists"
+      variable = "aws:SourceVpc"
+      values   = [data.aws_vpc.vfx_vpc.id]
     }
   }
 
@@ -396,9 +428,21 @@ data "aws_iam_policy_document" "supervisor_departamento_policy" {
     resources = ["*"]
 
     condition {
-      test     = "NotIpAddress"
+      test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
       values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "NotIpAddressIfExists"
+      variable = "aws:VpcSourceIp"
+      values   = ["10.0.0.0/16"]
+    }
+
+    condition {
+      test     = "StringNotEqualsIfExists"
+      variable = "aws:SourceVpc"
+      values   = [data.aws_vpc.vfx_vpc.id]
     }
   }
 
