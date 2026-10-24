@@ -1,3 +1,5 @@
+
+
 variable "aws_access_key" {
   type      = string
   sensitive = true
@@ -12,7 +14,11 @@ variable "alert_email" {
   type      = string
   sensitive = true
 }
-
+variable "sns_endpoint" {
+  description = "Endpoint de SNS que usa la Lambda de aviso a invitados. En Floci: dejar vacio para que la Lambda use la red interna de Floci. En AWS real: vacio tambien."
+  type        = string
+  default     = ""
+}
 provider "aws" {
   region                      = "us-east-1"
   access_key                  = var.aws_access_key
@@ -31,10 +37,19 @@ provider "aws" {
   }
 }
 
-data "aws_vpc" "vfx_vpc" {
-  filter {
-    name   = "cidr-block"
-    values = ["10.0.0.0/16"]
+data "terraform_remote_state" "network" {
+  backend = "s3"
+
+  config = {
+    bucket                      = "vfx-tfstate"
+    key                         = "01-network/terraform.tfstate"
+    region                      = "us-east-1"
+    endpoints                   = { s3 = "http://localhost:4566" }
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_requesting_account_id  = true
+    skip_region_validation      = true
   }
 }
 
@@ -142,18 +157,16 @@ resource "aws_cognito_user_pool_client" "invitados_client" {
 # ===================================================================
 # ABAC (Attribute-Based Access Control) - departamentos del pipeline
 # ===================================================================
-# En vez de escribir una politica de "alcance" por cada uno de los 6
-# departamentos, se usa una unica condicion basada en la etiqueta
-# "departamento" del usuario (aws:PrincipalTag/departamento), comparada
-# contra la etiqueta "departamento" de cada bucket S3 y tabla DynamoDB
-# (ya aplicada en el bloque 02-Storage). Asi, un usuario con la
-# etiqueta departamento=animacion solo puede operar sobre los recursos
-# S3/DynamoDB etiquetados departamento=animacion, sin importar que la
-# politica sea identica para los 6 departamentos.
-#
-# Los 6 buckets de Input/Output/Dailies y las 6 tablas de metadata
+# Una unica condicion basada en la etiqueta "departamento" del usuario
+# (aws:PrincipalTag/departamento), comparada contra la etiqueta de cada
+# bucket S3 y tabla DynamoDB (bloque 02-Storage). Los 7 departamentos
 # siguen el patron vfx-<departamento>-input, vfx-<departamento>-output,
-# vfx-<departamento>-dailies y vfx-<departamento>-metadata.
+# vfx-dailies/<departamento>/ y vfx-<departamento>-metadata.
+#
+# HORARIO (sesion del 23 de octubre de 2026): las politicas de trabajo
+# (los Allow de ABAC) viven en horario.tf y las adjunta/saca la Lambda
+# "vfx-horario". Aca solo queda la politica fija de cada grupo (bloqueo
+# de IP). Ver horario.tf para el detalle completo del diseno.
 # ===================================================================
 
 # ARTISTA
@@ -162,32 +175,6 @@ resource "aws_iam_group" "artista" {
 }
 
 data "aws_iam_policy_document" "artista_policy" {
-  statement {
-    sid       = "DenyFueraDeHorario"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "DateGreaterThan"
-      variable = "aws:CurrentTime"
-      values   = ["18:00:00Z"]
-    }
-  }
-
-  statement {
-    sid       = "DenyAntesDeHorario"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "DateLessThan"
-      variable = "aws:CurrentTime"
-      values   = ["09:00:00Z"]
-    }
-  }
-
   statement {
     sid       = "DenyFueraDeIP"
     effect    = "Deny"
@@ -209,60 +196,8 @@ data "aws_iam_policy_document" "artista_policy" {
     condition {
       test     = "StringNotEqualsIfExists"
       variable = "aws:SourceVpc"
-      values   = [data.aws_vpc.vfx_vpc.id]
+      values   = [data.terraform_remote_state.network.outputs.vpc_id]
     }
-  }
-
-  statement {
-    sid    = "ABACAccesoSoloASuDepartamentoS3"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:ListBucket",
-    ]
-    resources = [
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input/*",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output/*",
-    ]
-  }
-
-  statement {
-    sid       = "ABACDailiesListarSoloSuCarpeta"
-    effect    = "Allow"
-    actions   = ["s3:ListBucket"]
-    resources = ["arn:aws:s3:::vfx-dailies"]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["$${aws:PrincipalTag/departamento}/*"]
-    }
-  }
-
-  statement {
-    sid    = "ABACDailiesObjetosSoloSuCarpeta"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = ["arn:aws:s3:::vfx-dailies/$${aws:PrincipalTag/departamento}/*"]
-  }
-
-  statement {
-    sid    = "ABACAccesoSoloASuDepartamentoDynamoDB"
-    effect = "Allow"
-    actions = [
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:Query",
-    ]
-    resources = [
-      "arn:aws:dynamodb:*:*:table/vfx-$${aws:PrincipalTag/departamento}-metadata",
-    ]
   }
 }
 
@@ -283,32 +218,6 @@ resource "aws_iam_group" "lead" {
 
 data "aws_iam_policy_document" "lead_policy" {
   statement {
-    sid       = "DenyFueraDeHorario"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "DateGreaterThan"
-      variable = "aws:CurrentTime"
-      values   = ["18:00:00Z"]
-    }
-  }
-
-  statement {
-    sid       = "DenyAntesDeHorario"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "DateLessThan"
-      variable = "aws:CurrentTime"
-      values   = ["09:00:00Z"]
-    }
-  }
-
-  statement {
     sid       = "DenyFueraDeIP"
     effect    = "Deny"
     actions   = ["*"]
@@ -329,60 +238,8 @@ data "aws_iam_policy_document" "lead_policy" {
     condition {
       test     = "StringNotEqualsIfExists"
       variable = "aws:SourceVpc"
-      values   = [data.aws_vpc.vfx_vpc.id]
+      values   = [data.terraform_remote_state.network.outputs.vpc_id]
     }
-  }
-
-  statement {
-    sid    = "ABACAccesoSoloASuDepartamentoS3"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:ListBucket",
-    ]
-    resources = [
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-input/*",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output",
-      "arn:aws:s3:::vfx-$${aws:PrincipalTag/departamento}-output/*",
-    ]
-  }
-
-  statement {
-    sid       = "ABACDailiesListarSoloSuCarpeta"
-    effect    = "Allow"
-    actions   = ["s3:ListBucket"]
-    resources = ["arn:aws:s3:::vfx-dailies"]
-
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["$${aws:PrincipalTag/departamento}/*"]
-    }
-  }
-
-  statement {
-    sid    = "ABACDailiesObjetosSoloSuCarpeta"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-    ]
-    resources = ["arn:aws:s3:::vfx-dailies/$${aws:PrincipalTag/departamento}/*"]
-  }
-
-  statement {
-    sid    = "ABACAccesoSoloASuDepartamentoDynamoDB"
-    effect = "Allow"
-    actions = [
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:Query",
-    ]
-    resources = [
-      "arn:aws:dynamodb:*:*:table/vfx-$${aws:PrincipalTag/departamento}-metadata",
-    ]
   }
 }
 
@@ -403,25 +260,6 @@ resource "aws_iam_group" "supervisor_departamento" {
 
 data "aws_iam_policy_document" "supervisor_departamento_policy" {
   statement {
-    sid       = "ExigirMFAFueraDeHorario"
-    effect    = "Deny"
-    actions   = ["*"]
-    resources = ["*"]
-
-    condition {
-      test     = "DateGreaterThan"
-      variable = "aws:CurrentTime"
-      values   = ["18:00:00Z"]
-    }
-
-    condition {
-      test     = "BoolIfExists"
-      variable = "aws:MultiFactorAuthPresent"
-      values   = ["false"]
-    }
-  }
-
-  statement {
     sid       = "DenyFueraDeIP"
     effect    = "Deny"
     actions   = ["*"]
@@ -442,7 +280,7 @@ data "aws_iam_policy_document" "supervisor_departamento_policy" {
     condition {
       test     = "StringNotEqualsIfExists"
       variable = "aws:SourceVpc"
-      values   = [data.aws_vpc.vfx_vpc.id]
+      values   = [data.terraform_remote_state.network.outputs.vpc_id]
     }
   }
 
@@ -518,16 +356,18 @@ resource "aws_iam_group" "supervisor_vfx_general" {
 }
 
 data "aws_iam_policy_document" "supervisor_vfx_general_policy" {
+  # PROVISORIO: la definicion final de "IP habitual" queda atada a la decision de IP
+  # pendiente (aws:SourceIp vs aws:SourceVpc, camino de acceso por internet).
   statement {
-    sid       = "ExigirMFAFueraDeHorario"
+    sid       = "ExigirMFASiIPDistinta"
     effect    = "Deny"
     actions   = ["*"]
     resources = ["*"]
 
     condition {
-      test     = "DateGreaterThan"
-      variable = "aws:CurrentTime"
-      values   = ["18:00:00Z"]
+      test     = "NotIpAddressIfExists"
+      variable = "aws:SourceIp"
+      values   = ["10.0.0.0/16"]
     }
 
     condition {
@@ -535,6 +375,39 @@ data "aws_iam_policy_document" "supervisor_vfx_general_policy" {
       variable = "aws:MultiFactorAuthPresent"
       values   = ["false"]
     }
+  }
+
+  statement {
+    sid     = "TodosLosDepartamentosS3"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"]
+    resources = flatten([
+      for d in local.horario_departamentos : [
+        "arn:aws:s3:::vfx-${d}-input",
+        "arn:aws:s3:::vfx-${d}-input/*",
+        "arn:aws:s3:::vfx-${d}-output",
+        "arn:aws:s3:::vfx-${d}-output/*",
+      ]
+    ])
+  }
+
+  statement {
+    sid     = "TodasLasCarpetasDeDailies"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+    resources = [
+      "arn:aws:s3:::vfx-dailies",
+      "arn:aws:s3:::vfx-dailies/*",
+    ]
+  }
+
+  statement {
+    sid     = "TodasLasTablasDeMetadata"
+    effect  = "Allow"
+    actions = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem"]
+    resources = [
+      for d in local.horario_departamentos : "arn:aws:dynamodb:*:*:table/vfx-${d}-metadata"
+    ]
   }
 }
 
@@ -548,93 +421,6 @@ resource "aws_iam_group_policy_attachment" "supervisor_vfx_general_attach" {
   policy_arn = aws_iam_policy.supervisor_vfx_general_policy.arn
 }
 
-# GRUPO OVERTIME-ACCESS
-resource "aws_iam_group" "overtime_access" {
-  name = "vfx-overtime-access"
-}
-
-data "aws_iam_policy_document" "overtime_access_policy" {
-  statement {
-    sid       = "PermitirFinDeSemana"
-    effect    = "Allow"
-    actions   = ["*"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_policy" "overtime_access_policy" {
-  name   = "vfx-overtime-access-policy"
-  policy = data.aws_iam_policy_document.overtime_access_policy.json
-}
-
-resource "aws_iam_group_policy_attachment" "overtime_access_attach" {
-  group      = aws_iam_group.overtime_access.name
-  policy_arn = aws_iam_policy.overtime_access_policy.arn
-}
-
-# LAMBDA QUE VACIA EL GRUPO LOS LUNES
-resource "aws_iam_role" "lambda_overtime_role" {
-  name = "vfx-lambda-overtime-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-}
-
-data "archive_file" "lambda_overtime_zip" {
-  type        = "zip"
-  output_path = "${path.module}/lambda_overtime.zip"
-
-  source {
-    content  = <<EOF
-import boto3
-
-def handler(event, context):
-    iam = boto3.client("iam", endpoint_url="http://localhost:4566", region_name="us-east-1")
-    group_name = "vfx-overtime-access"
-    users = iam.get_group(GroupName=group_name)["Users"]
-    for user in users:
-        iam.remove_user_from_group(GroupName=group_name, UserName=user["UserName"])
-    return {"removidos": len(users)}
-EOF
-    filename = "index.py"
-  }
-}
-
-resource "aws_lambda_function" "overtime_cleanup" {
-  function_name    = "vfx-overtime-cleanup"
-  role             = aws_iam_role.lambda_overtime_role.arn
-  handler          = "index.handler"
-  runtime          = "python3.12"
-  filename         = data.archive_file.lambda_overtime_zip.output_path
-  source_code_hash = data.archive_file.lambda_overtime_zip.output_base64sha256
-}
-
-resource "aws_cloudwatch_event_rule" "overtime_cleanup_schedule" {
-  name                = "vfx-overtime-cleanup-lunes"
-  description         = "Vacia el grupo overtime-access cada lunes a la manana"
-  schedule_expression = "cron(0 9 ? * MON *)"
-}
-
-resource "aws_cloudwatch_event_target" "overtime_cleanup_target" {
-  rule = aws_cloudwatch_event_rule.overtime_cleanup_schedule.name
-  arn  = aws_lambda_function.overtime_cleanup.arn
-}
-
-resource "aws_lambda_permission" "allow_eventbridge_overtime" {
-  statement_id  = "AllowEventBridgeInvokeOvertime"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.overtime_cleanup.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.overtime_cleanup_schedule.arn
-}
 # GUEST-VIEWER: grupo de IAM de solo lectura
 resource "aws_iam_group" "guest_viewer" {
   name = "vfx-guest-viewer"
@@ -723,7 +509,7 @@ import boto3
 from datetime import datetime, timezone
 
 def handler(event, context):
-    sns = boto3.client("sns", endpoint_url="http://localhost:4566", region_name="us-east-1")
+    sns = boto3.client("sns", endpoint_url=os.environ.get("SNS_ENDPOINT") or None, region_name="us-east-1")
     email = event["request"]["userAttributes"].get("email", "desconocido")
     cuando = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
@@ -751,6 +537,7 @@ resource "aws_lambda_function" "guest_login_notify" {
   environment {
     variables = {
       TOPIC_ARN = aws_sns_topic.guest_login.arn
+      SNS_ENDPOINT = var.sns_endpoint
     }
   }
 }
@@ -847,6 +634,7 @@ resource "aws_lambda_permission" "allow_cognito_presignup" {
 # exclusivo: no pisa otras membresias que el usuario pueda tener).
 # Sirven unicamente para probar en Floci que el filtro por tag
 # realmente deja pasar o bloquea segun corresponda.
+# (El usuario de prueba de Render Final esta en horario.tf.)
 # ===================================================================
 
 resource "aws_iam_user" "prueba_artista_modelado" {
