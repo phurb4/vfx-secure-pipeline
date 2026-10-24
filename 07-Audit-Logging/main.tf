@@ -182,12 +182,13 @@ resource "aws_cloudtrail" "audit" {
       type   = "AWS::S3::Object"
       values = [
         "arn:aws:s3:::vfx-modelado-output/",
-        "arn:aws:s3:::vfx-texturizado-output/",
+        "arn:aws:s3:::vfx-texturing-output/",
+        "arn:aws:s3:::vfx-animation-output/",
         "arn:aws:s3:::vfx-rigging-output/",
-        "arn:aws:s3:::vfx-animacion-output/",
         "arn:aws:s3:::vfx-fx-output/",
         "arn:aws:s3:::vfx-compositing-output/",
         "arn:aws:s3:::vfx-cliente-entregas/",
+        "arn:aws:s3:::vfx-render-final-output/",
       ]
     }
   }
@@ -400,8 +401,8 @@ resource "aws_lambda_function" "horario_alarma" {
   environment {
     variables = {
       TOPIC_ARN   = aws_sns_topic.security_alerts.arn
-      HORA_INICIO = "9"
-      HORA_FIN    = "18"
+      HORA_INICIO = "12"
+      HORA_FIN    = "21"
     }
   }
 

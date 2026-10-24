@@ -184,13 +184,13 @@ data "aws_iam_policy_document" "artista_policy" {
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:VpcSourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
@@ -226,13 +226,13 @@ data "aws_iam_policy_document" "lead_policy" {
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:VpcSourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
@@ -268,13 +268,13 @@ data "aws_iam_policy_document" "supervisor_departamento_policy" {
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:VpcSourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
@@ -367,7 +367,7 @@ data "aws_iam_policy_document" "supervisor_vfx_general_policy" {
     condition {
       test     = "NotIpAddressIfExists"
       variable = "aws:SourceIp"
-      values   = ["10.0.0.0/16"]
+      values   = local.ips_permitidas
     }
 
     condition {
