@@ -429,3 +429,61 @@ resource "aws_cloudwatch_log_subscription_filter" "horario" {
 
   depends_on = [aws_lambda_permission.horario_desde_logs]
 }
+# --- Alarma 4: falla de la Lambda vfx-horario ---
+# Si vfx-horario falla a la hora de cierre, el acceso de Artista y Lead queda abierto
+# hasta el dia siguiente. Usa la metrica Errors que Lambda publica sola (no depende de
+# CloudTrail). Un solo error en 5 minutos ya dispara el aviso.
+
+resource "aws_cloudwatch_metric_alarm" "horario_lambda_errores" {
+  count = var.enable_security_alarms ? 1 : 0
+
+  alarm_name          = "vfx-horario-lambda-errores"
+  alarm_description   = "La Lambda vfx-horario fallo: el cierre o la apertura de acceso por horario puede no haberse aplicado."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = "vfx-horario" }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.security_alerts.arn]
+
+  tags = local.common_tags
+}
+# --- Alarma 5: falla de las Lambdas de dailies (una alarma por funcion) ---
+# Las Lambdas de dailies son invocadas por S3 de forma asincrona: si fallan, Lambda
+# reintenta y descarta, sin ningun aviso. Usa la metrica Errors que Lambda publica sola.
+
+locals {
+  lambdas_dailies = toset([
+    "vfx-modelado-imagen-dailies",
+    "vfx-texturing-imagen-dailies",
+    "vfx-rigging-imagen-dailies",
+    "vfx-animation-video-burn",
+    "vfx-fx-video-burn",
+    "vfx-compositing-video-burn",
+  ])
+}
+
+resource "aws_cloudwatch_metric_alarm" "dailies_lambda_errores" {
+  for_each = var.enable_security_alarms ? local.lambdas_dailies : toset([])
+
+  alarm_name          = "${each.key}-errores"
+  alarm_description   = "La Lambda ${each.key} fallo: un archivo subido puede no haber llegado a dailies."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = each.key }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.security_alerts.arn]
+
+  tags = local.common_tags
+}

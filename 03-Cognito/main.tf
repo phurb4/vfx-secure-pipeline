@@ -654,6 +654,39 @@ resource "aws_iam_user_group_membership" "prueba_artista_modelado_membership" {
   ]
 }
 
+resource "aws_iam_user" "prueba_lead_modelado" {
+  name = "prueba-lead-modelado"
+
+  tags = {
+    departamento = "modelado"
+    rol          = "lead"
+    proyecto     = "pipeline-vfx"
+  }
+}
+
+resource "aws_iam_user_group_membership" "prueba_lead_modelado_membership" {
+  user = aws_iam_user.prueba_lead_modelado.name
+  groups = [
+    aws_iam_group.lead.name,
+  ]
+}
+
+resource "aws_iam_user" "prueba_supervisor_vfx_general" {
+  name = "prueba-supervisor-vfx-general"
+
+  tags = {
+    rol      = "supervisor-vfx-general"
+    proyecto = "pipeline-vfx"
+  }
+}
+
+resource "aws_iam_user_group_membership" "prueba_supervisor_vfx_general_membership" {
+  user = aws_iam_user.prueba_supervisor_vfx_general.name
+  groups = [
+    aws_iam_group.supervisor_vfx_general.name,
+  ]
+}
+
 resource "aws_iam_user" "prueba_artista_animacion" {
   name = "prueba-artista-animacion"
 
