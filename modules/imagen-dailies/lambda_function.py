@@ -2,7 +2,7 @@ import os
 import urllib.parse
 import boto3
 
-s3 = boto3.client("s3", endpoint_url="http://localhost.floci.io:4566")
+s3 = boto3.client("s3", endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None)
 
 DAILIES_BUCKET = os.environ["DAILIES_BUCKET"]
 DEPT_PREFIX = os.environ["DEPT_PREFIX"]

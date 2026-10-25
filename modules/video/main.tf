@@ -83,6 +83,7 @@ resource "aws_lambda_function" "video_burn" {
     variables = {
       DAILIES_BUCKET = var.dailies_bucket
       DEPT_PREFIX    = var.departamento
+      S3_ENDPOINT_URL = var.s3_endpoint
     }
   }
 }

@@ -7,7 +7,7 @@ import subprocess  # nosec B404
 import urllib.parse
 import boto3
 
-s3 = boto3.client("s3", endpoint_url="http://localhost.floci.io:4566")
+s3 = boto3.client("s3", endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None)
 
 
 def encontrar_ffmpeg():
