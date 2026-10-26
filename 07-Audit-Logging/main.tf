@@ -465,6 +465,7 @@ locals {
     "vfx-animation-video-burn",
     "vfx-fx-video-burn",
     "vfx-compositing-video-burn",
+    "vfx-render-final-video-burn",
   ])
 }
 
