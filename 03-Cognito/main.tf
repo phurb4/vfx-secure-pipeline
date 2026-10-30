@@ -1,15 +1,3 @@
-
-
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 variable "alert_email" {
   type      = string
   sensitive = true
@@ -19,37 +7,18 @@ variable "sns_endpoint" {
   type        = string
   default     = ""
 }
-provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
 
-  endpoints {
-    cognitoidp = "http://localhost:4566"
-    iam        = "http://localhost:4566"
-    lambda     = "http://localhost:4566"
-    events     = "http://localhost:4566"
-    sns        = "http://localhost:4566"
-    ec2        = "http://localhost:4566"
-  }
+provider "aws" {
+  region = "us-east-2"
 }
 
 data "terraform_remote_state" "network" {
   backend = "s3"
 
   config = {
-    bucket                      = "vfx-tfstate"
-    key                         = "01-network/terraform.tfstate"
-    region                      = "us-east-1"
-    endpoints                   = { s3 = "http://localhost:4566" }
-    use_path_style              = true
-    skip_credentials_validation = true
-    skip_metadata_api_check     = true
-    skip_requesting_account_id  = true
-    skip_region_validation      = true
+    bucket = "vfx-tfstate-a7k3"
+    key    = "01-network/terraform.tfstate"
+    region = "us-east-2"
   }
 }
 
@@ -165,15 +134,16 @@ resource "aws_cognito_user_pool_client" "invitados_client" {
 #
 # HORARIO (sesion del 23 de octubre de 2026): las politicas de trabajo
 # (los Allow de ABAC) viven en horario.tf y las adjunta/saca la Lambda
-# "vfx-horario". Aca solo queda la politica fija de cada grupo (bloqueo
-# de IP). Ver horario.tf para el detalle completo del diseno.
+# "vfx-horario". Aca solo quedan las politicas fijas de cada rol (bloqueo
+# de IP, accesos de supervisores). Ver horario.tf para el diseno completo.
+#
+# SIN GRUPOS DE IAM (30 de octubre de 2026): la cuenta real esta bajo una
+# service control policy (SCP) de AWS Organizations que niega iam:CreateGroup,
+# incluso al administrador. Por eso NO hay grupos: cada politica se adjunta
+# directamente al usuario segun su etiqueta "rol" (ver bloque ADJUNTOS al final).
 # ===================================================================
 
 # ARTISTA
-resource "aws_iam_group" "artista" {
-  name = "vfx-artista"
-}
-
 data "aws_iam_policy_document" "artista_policy" {
   statement {
     sid       = "DenyFueraDeIP"
@@ -206,16 +176,7 @@ resource "aws_iam_policy" "artista_policy" {
   policy = data.aws_iam_policy_document.artista_policy.json
 }
 
-resource "aws_iam_group_policy_attachment" "artista_attach" {
-  group      = aws_iam_group.artista.name
-  policy_arn = aws_iam_policy.artista_policy.arn
-}
-
 # LEAD
-resource "aws_iam_group" "lead" {
-  name = "vfx-lead"
-}
-
 data "aws_iam_policy_document" "lead_policy" {
   statement {
     sid       = "DenyFueraDeIP"
@@ -248,16 +209,7 @@ resource "aws_iam_policy" "lead_policy" {
   policy = data.aws_iam_policy_document.lead_policy.json
 }
 
-resource "aws_iam_group_policy_attachment" "lead_attach" {
-  group      = aws_iam_group.lead.name
-  policy_arn = aws_iam_policy.lead_policy.arn
-}
-
 # SUPERVISOR DE DEPARTAMENTO
-resource "aws_iam_group" "supervisor_departamento" {
-  name = "vfx-supervisor-departamento"
-}
-
 data "aws_iam_policy_document" "supervisor_departamento_policy" {
   statement {
     sid       = "DenyFueraDeIP"
@@ -345,16 +297,7 @@ resource "aws_iam_policy" "supervisor_departamento_policy" {
   policy = data.aws_iam_policy_document.supervisor_departamento_policy.json
 }
 
-resource "aws_iam_group_policy_attachment" "supervisor_departamento_attach" {
-  group      = aws_iam_group.supervisor_departamento.name
-  policy_arn = aws_iam_policy.supervisor_departamento_policy.arn
-}
-
 # SUPERVISOR VFX GENERAL
-resource "aws_iam_group" "supervisor_vfx_general" {
-  name = "vfx-supervisor-vfx-general"
-}
-
 data "aws_iam_policy_document" "supervisor_vfx_general_policy" {
   # PROVISORIO: la definicion final de "IP habitual" queda atada a la decision de IP
   # pendiente (aws:SourceIp vs aws:SourceVpc, camino de acceso por internet).
@@ -416,16 +359,8 @@ resource "aws_iam_policy" "supervisor_vfx_general_policy" {
   policy = data.aws_iam_policy_document.supervisor_vfx_general_policy.json
 }
 
-resource "aws_iam_group_policy_attachment" "supervisor_vfx_general_attach" {
-  group      = aws_iam_group.supervisor_vfx_general.name
-  policy_arn = aws_iam_policy.supervisor_vfx_general_policy.arn
-}
-
-# GUEST-VIEWER: grupo de IAM de solo lectura
-resource "aws_iam_group" "guest_viewer" {
-  name = "vfx-guest-viewer"
-}
-
+# GUEST-VIEWER: politica de solo lectura (queda creada y sin adjuntar: los
+# invitados entran por Cognito y no hay usuarios de IAM a quien adjuntarsela)
 data "aws_iam_policy_document" "guest_viewer_policy" {
   statement {
     sid       = "LecturaListadoBucketEntregas"
@@ -445,11 +380,6 @@ data "aws_iam_policy_document" "guest_viewer_policy" {
 resource "aws_iam_policy" "guest_viewer_policy" {
   name   = "vfx-guest-viewer-policy"
   policy = data.aws_iam_policy_document.guest_viewer_policy.json
-}
-
-resource "aws_iam_group_policy_attachment" "guest_viewer_attach" {
-  group      = aws_iam_group.guest_viewer.name
-  policy_arn = aws_iam_policy.guest_viewer_policy.arn
 }
 
 # SNS: aviso de acceso de invitados
@@ -509,7 +439,7 @@ import boto3
 from datetime import datetime, timezone
 
 def handler(event, context):
-    sns = boto3.client("sns", endpoint_url=os.environ.get("SNS_ENDPOINT") or None, region_name="us-east-1")
+    sns = boto3.client("sns", endpoint_url=os.environ.get("SNS_ENDPOINT") or None, region_name=os.environ.get("AWS_REGION", "us-east-1"))
     email = event["request"]["userAttributes"].get("email", "desconocido")
     cuando = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
@@ -628,10 +558,9 @@ resource "aws_lambda_permission" "allow_cognito_presignup" {
 # ===================================================================
 # USUARIOS DE PRUEBA PARA VALIDAR ABAC (sesion del 15 de octubre de 2026)
 # ===================================================================
-# Tres usuarios de IAM de ejemplo, cada uno con el tag "departamento"
-# que usa la condicion ABAC de las politicas de arriba, y metidos en
-# su grupo correspondiente con aws_iam_user_group_membership (no
-# exclusivo: no pisa otras membresias que el usuario pueda tener).
+# Usuarios de IAM de ejemplo, cada uno con el tag "departamento" que usa
+# la condicion ABAC de las politicas de arriba y el tag "rol" que decide
+# que politicas fijas recibe (ver bloque ADJUNTOS al final).
 # Sirven unicamente para probar en Floci que el filtro por tag
 # realmente deja pasar o bloquea segun corresponda.
 # (El usuario de prueba de Render Final esta en horario.tf.)
@@ -647,13 +576,6 @@ resource "aws_iam_user" "prueba_artista_modelado" {
   }
 }
 
-resource "aws_iam_user_group_membership" "prueba_artista_modelado_membership" {
-  user = aws_iam_user.prueba_artista_modelado.name
-  groups = [
-    aws_iam_group.artista.name,
-  ]
-}
-
 resource "aws_iam_user" "prueba_lead_modelado" {
   name = "prueba-lead-modelado"
 
@@ -664,13 +586,6 @@ resource "aws_iam_user" "prueba_lead_modelado" {
   }
 }
 
-resource "aws_iam_user_group_membership" "prueba_lead_modelado_membership" {
-  user = aws_iam_user.prueba_lead_modelado.name
-  groups = [
-    aws_iam_group.lead.name,
-  ]
-}
-
 resource "aws_iam_user" "prueba_supervisor_vfx_general" {
   name = "prueba-supervisor-vfx-general"
 
@@ -678,13 +593,6 @@ resource "aws_iam_user" "prueba_supervisor_vfx_general" {
     rol      = "supervisor-vfx-general"
     proyecto = "pipeline-vfx"
   }
-}
-
-resource "aws_iam_user_group_membership" "prueba_supervisor_vfx_general_membership" {
-  user = aws_iam_user.prueba_supervisor_vfx_general.name
-  groups = [
-    aws_iam_group.supervisor_vfx_general.name,
-  ]
 }
 
 resource "aws_iam_user" "prueba_artista_animacion" {
@@ -697,13 +605,6 @@ resource "aws_iam_user" "prueba_artista_animacion" {
   }
 }
 
-resource "aws_iam_user_group_membership" "prueba_artista_animacion_membership" {
-  user = aws_iam_user.prueba_artista_animacion.name
-  groups = [
-    aws_iam_group.artista.name,
-  ]
-}
-
 resource "aws_iam_user" "prueba_supervisor_modelado" {
   name = "prueba-supervisor-modelado"
 
@@ -714,9 +615,53 @@ resource "aws_iam_user" "prueba_supervisor_modelado" {
   }
 }
 
-resource "aws_iam_user_group_membership" "prueba_supervisor_modelado_membership" {
-  user = aws_iam_user.prueba_supervisor_modelado.name
-  groups = [
-    aws_iam_group.supervisor_departamento.name,
+# ===================================================================
+# ADJUNTOS FIJOS POR ROL (reemplazan a los grupos de IAM, ver arriba)
+# ===================================================================
+# Cada usuario recibe las politicas fijas de su rol segun su etiqueta
+# "rol". Las claves del mapa son fijas (base, overtime) para que
+# Terraform pueda calcular el plan aunque los ARN no existan todavia.
+# Para sumar a una persona real: crear su aws_iam_user con las etiquetas
+# "rol" y "departamento" y agregarlo a local.personal.
+# ===================================================================
+
+locals {
+  politicas_fijas_por_rol = {
+    "artista" = {
+      base = aws_iam_policy.artista_policy.arn
+    }
+    "lead" = {
+      base = aws_iam_policy.lead_policy.arn
+    }
+    "supervisor-departamento" = {
+      base     = aws_iam_policy.supervisor_departamento_policy.arn
+      overtime = aws_iam_policy.supervisor_departamento_overtime.arn
+    }
+    "supervisor-vfx-general" = {
+      base     = aws_iam_policy.supervisor_vfx_general_policy.arn
+      overtime = aws_iam_policy.supervisor_general_overtime.arn
+    }
+  }
+
+  personal = [
+    aws_iam_user.prueba_artista_modelado,
+    aws_iam_user.prueba_lead_modelado,
+    aws_iam_user.prueba_supervisor_vfx_general,
+    aws_iam_user.prueba_artista_animacion,
+    aws_iam_user.prueba_supervisor_modelado,
+    aws_iam_user.prueba_artista_render_final,
   ]
+
+  adjuntos_fijos = merge([
+    for u in local.personal : {
+      for clave, arn in local.politicas_fijas_por_rol[u.tags["rol"]] :
+      "${u.name}|${clave}" => { usuario = u.id, politica_arn = arn }
+    }
+  ]...)
+}
+
+resource "aws_iam_user_policy_attachment" "fijos" {
+  for_each   = local.adjuntos_fijos
+  user       = each.value.usuario
+  policy_arn = each.value.politica_arn
 }

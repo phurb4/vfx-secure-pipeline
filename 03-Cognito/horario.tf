@@ -3,12 +3,17 @@
 # =====================================================================
 # Diseno: IAM niega por defecto todo lo que no tiene un Allow. Entonces:
 #  - Las "politicas de trabajo" se CREAN aca pero NO se adjuntan con Terraform.
-#    Las adjunta/saca la Lambda "vfx-horario" segun el horario (Terraform solo
-#    las crea; si las adjuntara, cada plan veria diferencias contra lo que la
-#    Lambda hizo de noche).
+#    Las adjunta/saca la Lambda "vfx-horario" segun el horario, directamente a
+#    cada USUARIO (sin grupos: la SCP de la cuenta niega iam:CreateGroup).
+#    La Lambda decide a quien por las etiquetas "rol" y "departamento".
 #  - Artista/Lead/overtime: con la politica de trabajo puesta pueden trabajar;
 #    sin ella, IAM les niega todo (no hace falta ningun Deny de horario).
 #  - Supervisores: la politica "exigir MFA" se adjunta fuera de horario.
+#  - Overtime: el supervisor etiqueta al usuario con overtime=si; la Lambda
+#    adjunta la politica de overtime del departamento a TODOS los artistas y
+#    leads de ese departamento de 09:00 a 18:00, pero la politica solo vale
+#    para quien tenga la etiqueta overtime=si (quitar la etiqueta revoca al
+#    instante). Los lunes la Lambda borra la etiqueta a todos.
 # Horarios en UTC. Buenos Aires = UTC-3 todo el anio (sin horario de verano):
 #   09:00 Buenos Aires = 12:00 UTC  |  18:00 Buenos Aires = 21:00 UTC
 # =====================================================================
@@ -40,7 +45,7 @@ locals {
 }
 
 # ---------------------------------------------------------------------
-# POLITICA DE TRABAJO DE ARTISTA Y LEAD (identica para los dos grupos)
+# POLITICA DE TRABAJO DE ARTISTA Y LEAD (identica para los dos roles)
 # La adjunta la Lambda a las 09:00 y la saca a las 18:00, lunes a viernes.
 # ---------------------------------------------------------------------
 data "aws_iam_policy_document" "trabajo_artista_lead" {
@@ -103,19 +108,15 @@ resource "aws_iam_policy" "trabajo_artista_lead" {
 }
 
 # ---------------------------------------------------------------------
-# GRUPOS DE OVERTIME: uno por departamento
-# La politica de cada grupo apunta SOLO a los recursos de su departamento y
-# ademas exige que la etiqueta "departamento" del usuario coincida. Asi, si
-# un supervisor suma por error a alguien de otro departamento, esa persona
-# queda en el grupo pero no recibe ningun acceso.
+# POLITICAS DE OVERTIME: una por departamento
+# La politica de cada departamento apunta SOLO a los recursos de su
+# departamento y exige DOS etiquetas del usuario: departamento igual al
+# del recurso y overtime=si. Asi, aunque la Lambda la adjunte a todos los
+# artistas y leads del departamento durante el dia, solo funciona para
+# quien el supervisor etiqueto con overtime=si.
 # Horario: la Lambda adjunta la politica a las 09:00 y la saca a las 18:00,
 # TODOS los dias (incluye sabado y domingo).
 # ---------------------------------------------------------------------
-resource "aws_iam_group" "overtime" {
-  for_each = toset(local.horario_departamentos)
-  name     = "vfx-overtime-${each.key}"
-}
-
 data "aws_iam_policy_document" "overtime_trabajo" {
   for_each = toset(local.horario_departamentos)
 
@@ -139,6 +140,12 @@ data "aws_iam_policy_document" "overtime_trabajo" {
       variable = "aws:PrincipalTag/departamento"
       values   = [each.key]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:PrincipalTag/overtime"
+      values   = ["si"]
+    }
   }
 
   statement {
@@ -158,6 +165,12 @@ data "aws_iam_policy_document" "overtime_trabajo" {
       variable = "aws:PrincipalTag/departamento"
       values   = [each.key]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:PrincipalTag/overtime"
+      values   = ["si"]
+    }
   }
 
   statement {
@@ -173,6 +186,12 @@ data "aws_iam_policy_document" "overtime_trabajo" {
       test     = "StringEquals"
       variable = "aws:PrincipalTag/departamento"
       values   = [each.key]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:PrincipalTag/overtime"
+      values   = ["si"]
     }
   }
 
@@ -190,6 +209,12 @@ data "aws_iam_policy_document" "overtime_trabajo" {
       test     = "StringEquals"
       variable = "aws:PrincipalTag/departamento"
       values   = [each.key]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:PrincipalTag/overtime"
+      values   = ["si"]
     }
   }
 }
@@ -227,21 +252,76 @@ resource "aws_iam_policy" "supervisor_mfa" {
 }
 
 # ---------------------------------------------------------------------
-# SUPERVISORES: permiso para sumar y quitar gente de los grupos de overtime
-# (manual, cuando hace falta). Siempre adjuntas.
-#  - Supervisor de departamento: SOLO el grupo de su propio departamento.
-#  - Supervisor VFX general: los siete grupos.
+# SUPERVISORES: permiso para sumar y quitar gente de overtime
+# (manual, cuando hace falta). Siempre adjuntas. Sumar = poner la etiqueta
+# overtime=si al usuario; quitar = borrar esa etiqueta. Solo se puede tocar
+# la clave "overtime" (nunca "departamento" ni "rol").
+#  - Supervisor de departamento: SOLO usuarios de su propio departamento.
+#  - Supervisor VFX general: usuarios de cualquier departamento.
 # ---------------------------------------------------------------------
 data "aws_iam_policy_document" "supervisor_departamento_overtime" {
   statement {
-    sid    = "GestionarOvertimeSoloDeSuDepartamento"
-    effect = "Allow"
-    actions = [
-      "iam:AddUserToGroup",
-      "iam:RemoveUserFromGroup",
-      "iam:GetGroup",
-    ]
-    resources = ["arn:aws:iam::*:group/vfx-overtime-$${aws:PrincipalTag/departamento}"]
+    sid       = "PonerOvertimeSoloEnSuDepartamento"
+    effect    = "Allow"
+    actions   = ["iam:TagUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/departamento"
+      values   = ["$${aws:PrincipalTag/departamento}"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["overtime"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/overtime"
+      values   = ["si"]
+    }
+  }
+
+  statement {
+    sid       = "QuitarOvertimeSoloEnSuDepartamento"
+    effect    = "Allow"
+    actions   = ["iam:UntagUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/departamento"
+      values   = ["$${aws:PrincipalTag/departamento}"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["overtime"]
+    }
+  }
+
+  statement {
+    sid       = "VerEtiquetasDeSuDepartamento"
+    effect    = "Allow"
+    actions   = ["iam:ListUserTags", "iam:GetUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/departamento"
+      values   = ["$${aws:PrincipalTag/departamento}"]
+    }
+  }
+
+  statement {
+    sid       = "ListarUsuarios"
+    effect    = "Allow"
+    actions   = ["iam:ListUsers"]
+    resources = ["*"]
   }
 }
 
@@ -250,21 +330,44 @@ resource "aws_iam_policy" "supervisor_departamento_overtime" {
   policy = data.aws_iam_policy_document.supervisor_departamento_overtime.json
 }
 
-resource "aws_iam_group_policy_attachment" "supervisor_departamento_overtime_attach" {
-  group      = aws_iam_group.supervisor_departamento.name
-  policy_arn = aws_iam_policy.supervisor_departamento_overtime.arn
-}
-
 data "aws_iam_policy_document" "supervisor_general_overtime" {
   statement {
-    sid    = "GestionarOvertimeDeTodosLosDepartamentos"
-    effect = "Allow"
-    actions = [
-      "iam:AddUserToGroup",
-      "iam:RemoveUserFromGroup",
-      "iam:GetGroup",
-    ]
-    resources = [for g in aws_iam_group.overtime : g.arn]
+    sid       = "PonerOvertimeEnCualquierDepartamento"
+    effect    = "Allow"
+    actions   = ["iam:TagUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["overtime"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/overtime"
+      values   = ["si"]
+    }
+  }
+
+  statement {
+    sid       = "QuitarOvertimeEnCualquierDepartamento"
+    effect    = "Allow"
+    actions   = ["iam:UntagUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["overtime"]
+    }
+  }
+
+  statement {
+    sid       = "VerUsuariosYEtiquetas"
+    effect    = "Allow"
+    actions   = ["iam:ListUsers", "iam:ListUserTags", "iam:GetUser"]
+    resources = ["*"]
   }
 }
 
@@ -273,14 +376,9 @@ resource "aws_iam_policy" "supervisor_general_overtime" {
   policy = data.aws_iam_policy_document.supervisor_general_overtime.json
 }
 
-resource "aws_iam_group_policy_attachment" "supervisor_general_overtime_attach" {
-  group      = aws_iam_group.supervisor_vfx_general.name
-  policy_arn = aws_iam_policy.supervisor_general_overtime.arn
-}
-
 # ---------------------------------------------------------------------
-# LAMBDA vfx-horario: adjunta/saca politicas segun el horario y vacia los
-# grupos de overtime los lunes.
+# LAMBDA vfx-horario: adjunta/saca politicas a cada usuario segun el
+# horario (leyendo sus etiquetas) y borra la etiqueta overtime los lunes.
 # ---------------------------------------------------------------------
 resource "aws_iam_role" "lambda_overtime_role" {
   name = "vfx-lambda-overtime-role"
@@ -298,16 +396,6 @@ resource "aws_iam_role" "lambda_overtime_role" {
 }
 
 locals {
-  horario_grupos_con_politica = concat(
-    [
-      aws_iam_group.artista.arn,
-      aws_iam_group.lead.arn,
-      aws_iam_group.supervisor_departamento.arn,
-      aws_iam_group.supervisor_vfx_general.arn,
-    ],
-    [for g in aws_iam_group.overtime : g.arn],
-  )
-
   horario_politicas_permitidas = concat(
     [
       aws_iam_policy.trabajo_artista_lead.arn,
@@ -316,42 +404,47 @@ locals {
     [for p in aws_iam_policy.overtime_trabajo : p.arn],
   )
 
+  # La Lambda lee las etiquetas "rol" y "departamento" de cada usuario.
   horario_config = {
     semana = {
-      trabajo = [
-        { grupo = aws_iam_group.artista.name, politica_arn = aws_iam_policy.trabajo_artista_lead.arn },
-        { grupo = aws_iam_group.lead.name, politica_arn = aws_iam_policy.trabajo_artista_lead.arn },
-      ]
-      mfa = [
-        { grupo = aws_iam_group.supervisor_departamento.name, politica_arn = aws_iam_policy.supervisor_mfa.arn },
-        { grupo = aws_iam_group.supervisor_vfx_general.name, politica_arn = aws_iam_policy.supervisor_mfa.arn },
-      ]
+      trabajo = {
+        "artista" = aws_iam_policy.trabajo_artista_lead.arn
+        "lead"    = aws_iam_policy.trabajo_artista_lead.arn
+      }
+      mfa = {
+        "supervisor-departamento" = aws_iam_policy.supervisor_mfa.arn
+        "supervisor-vfx-general"  = aws_iam_policy.supervisor_mfa.arn
+      }
     }
     overtime = {
-      trabajo = [
-        for d in local.horario_departamentos : {
-          grupo        = aws_iam_group.overtime[d].name
-          politica_arn = aws_iam_policy.overtime_trabajo[d].arn
-        }
-      ]
+      roles = ["artista", "lead"]
+      politicas = {
+        for d in local.horario_departamentos : d => aws_iam_policy.overtime_trabajo[d].arn
+      }
     }
-    vaciar = [for d in local.horario_departamentos : aws_iam_group.overtime[d].name]
   }
 }
 
 data "aws_iam_policy_document" "lambda_horario_permisos" {
   statement {
-    sid       = "LeerPoliticasDeLosGruposDeHorario"
+    sid       = "ListarUsuarios"
     effect    = "Allow"
-    actions   = ["iam:ListAttachedGroupPolicies"]
-    resources = local.horario_grupos_con_politica
+    actions   = ["iam:ListUsers"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "LeerEtiquetasYPoliticasDeLosUsuarios"
+    effect    = "Allow"
+    actions   = ["iam:ListUserTags", "iam:ListAttachedUserPolicies"]
+    resources = ["arn:aws:iam::*:user/*"]
   }
 
   statement {
     sid       = "AdjuntarYSacarSoloLasPoliticasDeHorario"
     effect    = "Allow"
-    actions   = ["iam:AttachGroupPolicy", "iam:DetachGroupPolicy"]
-    resources = local.horario_grupos_con_politica
+    actions   = ["iam:AttachUserPolicy", "iam:DetachUserPolicy"]
+    resources = ["arn:aws:iam::*:user/*"]
 
     condition {
       test     = "ArnEquals"
@@ -361,10 +454,16 @@ data "aws_iam_policy_document" "lambda_horario_permisos" {
   }
 
   statement {
-    sid       = "VaciarSoloLosGruposDeOvertime"
+    sid       = "BorrarSoloLaEtiquetaOvertime"
     effect    = "Allow"
-    actions   = ["iam:GetGroup", "iam:RemoveUserFromGroup"]
-    resources = [for g in aws_iam_group.overtime : g.arn]
+    actions   = ["iam:UntagUser"]
+    resources = ["arn:aws:iam::*:user/*"]
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["overtime"]
+    }
   }
 
   statement {
@@ -400,37 +499,61 @@ def cliente_iam():
     return boto3.client("iam", endpoint_url=endpoint, region_name="us-east-1")
 
 
-def politicas_adjuntas(iam, grupo):
+def listar_personal(iam):
+    personal = []
+    for pagina in iam.get_paginator("list_users").paginate():
+        for usuario in pagina["Users"]:
+            nombre = usuario["UserName"]
+            etiquetas = {}
+            for p in iam.get_paginator("list_user_tags").paginate(UserName=nombre):
+                for etiqueta in p["Tags"]:
+                    etiquetas[etiqueta["Key"]] = etiqueta["Value"]
+            personal.append({"nombre": nombre, "etiquetas": etiquetas})
+    return personal
+
+
+def politicas_adjuntas(iam, usuario):
     arns = set()
-    paginador = iam.get_paginator("list_attached_group_policies")
-    for pagina in paginador.paginate(GroupName=grupo):
+    for pagina in iam.get_paginator("list_attached_user_policies").paginate(UserName=usuario):
         for politica in pagina["AttachedPolicies"]:
             arns.add(politica["PolicyArn"])
     return arns
 
 
-def aplicar(iam, par, adjuntar):
-    grupo = par["grupo"]
-    arn = par["politica_arn"]
-    puesta = arn in politicas_adjuntas(iam, grupo)
+def aplicar(iam, usuario, arn, adjuntar):
+    puesta = arn in politicas_adjuntas(iam, usuario)
     if adjuntar and not puesta:
-        iam.attach_group_policy(GroupName=grupo, PolicyArn=arn)
-        return grupo + ": adjuntada"
+        iam.attach_user_policy(UserName=usuario, PolicyArn=arn)
+        return usuario + ": adjuntada"
     if not adjuntar and puesta:
-        iam.detach_group_policy(GroupName=grupo, PolicyArn=arn)
-        return grupo + ": sacada"
-    return grupo + ": sin cambios"
+        iam.detach_user_policy(UserName=usuario, PolicyArn=arn)
+        return usuario + ": sacada"
+    return usuario + ": sin cambios"
 
 
-def vaciar(iam, grupo):
-    sacados = []
-    paginador = iam.get_paginator("get_group")
-    for pagina in paginador.paginate(GroupName=grupo):
-        for usuario in pagina["Users"]:
-            sacados.append(usuario["UserName"])
-    for nombre in sacados:
-        iam.remove_user_from_group(GroupName=grupo, UserName=nombre)
-    return grupo + ": " + str(len(sacados)) + " usuarios sacados"
+def vaciar(iam, usuario):
+    iam.untag_user(UserName=usuario, TagKeys=["overtime"])
+    return usuario + ": etiqueta overtime borrada"
+
+
+def armar_tareas(personal, conjunto, accion):
+    abrir = accion == "abrir"
+    tareas = []
+    for u in personal:
+        rol = u["etiquetas"].get("rol")
+        depto = u["etiquetas"].get("departamento")
+        if conjunto == "semana":
+            if rol in CONFIG["semana"]["trabajo"]:
+                tareas.append(("aplicar", u["nombre"], CONFIG["semana"]["trabajo"][rol], abrir))
+            if rol in CONFIG["semana"]["mfa"]:
+                tareas.append(("aplicar", u["nombre"], CONFIG["semana"]["mfa"][rol], not abrir))
+        elif conjunto == "overtime":
+            if rol in CONFIG["overtime"]["roles"] and depto in CONFIG["overtime"]["politicas"]:
+                tareas.append(("aplicar", u["nombre"], CONFIG["overtime"]["politicas"][depto], abrir))
+        elif conjunto == "vaciar":
+            if "overtime" in u["etiquetas"]:
+                tareas.append(("vaciar", u["nombre"], None, None))
+    return tareas
 
 
 def handler(event, context):
@@ -440,22 +563,14 @@ def handler(event, context):
     resultado = []
     errores = []
 
-    if conjunto == "vaciar":
-        tareas = [("vaciar", g) for g in CONFIG["vaciar"]]
-    else:
-        abrir = accion == "abrir"
-        seccion = CONFIG[conjunto]
-        tareas = [("trabajo", p, abrir) for p in seccion.get("trabajo", [])]
-        tareas += [("mfa", p, not abrir) for p in seccion.get("mfa", [])]
-
-    for tarea in tareas:
+    for tipo, usuario, arn, adjuntar in armar_tareas(listar_personal(iam), conjunto, accion):
         try:
-            if tarea[0] == "vaciar":
-                resultado.append(vaciar(iam, tarea[1]))
+            if tipo == "vaciar":
+                resultado.append(vaciar(iam, usuario))
             else:
-                resultado.append(aplicar(iam, tarea[1], tarea[2]))
+                resultado.append(aplicar(iam, usuario, arn, adjuntar))
         except Exception as e:
-            errores.append(str(tarea[1]) + " -> " + str(e))
+            errores.append(usuario + " -> " + str(e))
 
     print(json.dumps({"conjunto": conjunto, "accion": accion, "resultado": resultado, "errores": errores}))
     if errores:
@@ -523,11 +638,4 @@ resource "aws_iam_user" "prueba_artista_render_final" {
     rol          = "artista"
     proyecto     = "pipeline-vfx"
   }
-}
-
-resource "aws_iam_user_group_membership" "prueba_artista_render_final_membership" {
-  user = aws_iam_user.prueba_artista_render_final.name
-  groups = [
-    aws_iam_group.artista.name,
-  ]
 }
