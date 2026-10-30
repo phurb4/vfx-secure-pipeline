@@ -1,33 +1,21 @@
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-
-  endpoints {
-    ec2         = "http://localhost:4566"
-    autoscaling = "http://localhost:4566"
-    sqs         = "http://localhost:4566"
-    cloudwatch  = "http://localhost:4566"
-  }
+  region = "us-east-2"
 }
 
 variable "ami_id" {
-  description = "AMI de las instancias de render. En Floci es un ID de prueba; en AWS real hay que poner una AMI valida."
+  description = "AMI de las instancias de render. Vacio = usa la ultima Amazon Linux 2023 (provisoria, hasta tener una AMI propia con el software de render)."
   type        = string
-  default     = "ami-0abcdef1234567890"
+  default     = ""
+}
+
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
 }
 
 variable "instance_type" {
@@ -71,7 +59,7 @@ data "aws_security_group" "render_farm_sg" {
 # Launch template: la "receta" de cada instancia de render
 resource "aws_launch_template" "render_lt" {
   name          = "render-farm-lt"
-  image_id      = var.ami_id
+  image_id      = var.ami_id != "" ? var.ami_id : data.aws_ami.al2023.id
   instance_type = var.instance_type
 
   vpc_security_group_ids = [data.aws_security_group.render_farm_sg.id]
@@ -88,10 +76,11 @@ resource "aws_launch_template" "render_lt" {
     }
   }
 
-  # Spot Instances: hasta ~90% mas baratas que On-Demand
-  instance_market_options {
-    market_type = "spot"
-  }
+  # DISENO: Spot Instances (hasta ~90% mas baratas que On-Demand).
+  # CUENTA REAL: la SCP de la Organizacion niega ec2:RunInstances con Spot
+  # (verificado con --dry-run el 30 de octubre de 2026), asi que aca van
+  # instancias On-Demand. En una cuenta sin esa restriccion se vuelve a agregar:
+  #   instance_market_options { market_type = "spot" }
 
   tag_specifications {
     resource_type = "instance"
@@ -159,12 +148,6 @@ resource "aws_autoscaling_policy" "render_scale_out" {
   adjustment_type        = "ChangeInCapacity"
   scaling_adjustment     = 1
   cooldown               = 300
-
-  # SOLO EMULADOR: Floci devuelve enabled=false al leer la politica, lo que genera
-  # un cambio fantasma en cada plan. Quitar este bloque al desplegar en AWS real.
-  lifecycle {
-    ignore_changes = [enabled]
-  }
 }
 
 # Politica de bajada: deja el grupo en 0 instancias
@@ -175,11 +158,6 @@ resource "aws_autoscaling_policy" "render_scale_in" {
   adjustment_type        = "ExactCapacity"
   scaling_adjustment     = 0
   cooldown               = 300
-
-  # SOLO EMULADOR: ver comentario de render_scale_out.
-  lifecycle {
-    ignore_changes = [enabled]
-  }
 }
 
 # Alarma: hay trabajos esperando en la cola -> subir
