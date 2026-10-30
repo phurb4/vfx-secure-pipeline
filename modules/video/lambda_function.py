@@ -55,7 +55,8 @@ def lambda_handler(event, context):
 
     s3.download_file(src_bucket, src_key, local_in)
 
-    shot = escape_drawtext(nombre_sin_ext)
+    nombre_seguro = "".join(c if (c.isascii() and c.isalnum()) or c in "_-." else "_" for c in nombre_sin_ext)
+    shot = escape_drawtext(nombre_seguro)
     font = FONT
 
     estilo = f"fontfile='{font}':fontcolor=white:fontsize=28:box=1:boxcolor=black@0.7:boxborderw=10"
