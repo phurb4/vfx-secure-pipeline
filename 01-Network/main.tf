@@ -1,28 +1,10 @@
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-
-  endpoints {
-    ec2 = "http://localhost:4566"
-  }
+  region = "us-east-2"
 }
 
 resource "aws_vpc" "vfx_vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
 
   tags = {
     Name     = "vfx-vpc"
@@ -489,8 +471,9 @@ resource "aws_network_acl_rule" "compositing_out_ephemeral" {
 }
 
 resource "aws_vpc_endpoint" "s3_endpoint" {
-  vpc_id       = aws_vpc.vfx_vpc.id
-  service_name = "com.amazonaws.us-east-1.s3"
+  vpc_id          = aws_vpc.vfx_vpc.id
+  service_name    = "com.amazonaws.us-east-2.s3"
+  route_table_ids = [aws_vpc.vfx_vpc.main_route_table_id]
 
   tags = {
     Name     = "vfx-s3-endpoint"
@@ -499,11 +482,12 @@ resource "aws_vpc_endpoint" "s3_endpoint" {
 }
 
 resource "aws_vpc_endpoint" "sqs_endpoint" {
-  vpc_id            = aws_vpc.vfx_vpc.id
-  service_name      = "com.amazonaws.us-east-1.sqs"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = [aws_subnet.modelado_subnet.id]
-  security_group_ids = [aws_security_group.sqs_endpoint_sg.id]
+  vpc_id              = aws_vpc.vfx_vpc.id
+  service_name        = "com.amazonaws.us-east-2.sqs"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.modelado_subnet.id]
+  security_group_ids  = [aws_security_group.sqs_endpoint_sg.id]
 
   tags = {
     Name     = "vfx-sqs-endpoint"
