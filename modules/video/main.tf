@@ -72,7 +72,7 @@ resource "aws_lambda_function" "video_burn" {
   runtime       = "python3.12"
   handler       = "lambda_function.lambda_handler"
   timeout       = 300
-  memory_size   = 512
+  memory_size   = 2048
 
   filename         = data.archive_file.video_burn_zip.output_path
   source_code_hash = data.archive_file.video_burn_zip.output_base64sha256
