@@ -1,30 +1,5 @@
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-
-  endpoints {
-    sns           = "http://localhost:4566"
-    iam           = "http://localhost:4566"
-    dynamodb      = "http://localhost:4566"
-    lambda        = "http://localhost:4566"
-    stepfunctions = "http://localhost:4566"
-    sts           = "http://localhost:4566"
-    s3            = "http://localhost:4566"
-  }
+  region = "us-east-2"
 }
 
 variable "alert_email" {
