@@ -1,34 +1,8 @@
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-
-  endpoints {
-    s3             = "http://localhost:4566"
-    iam            = "http://localhost:4566"
-    sns            = "http://localhost:4566"
-    cloudtrail     = "http://localhost:4566"
-    cloudwatchlogs = "http://localhost:4566"
-  }
+  region = "us-east-2"
 }
 
-variable "account_id" {
-  description = "ID de la cuenta (ficticia en Floci). Se usa para armar ARNs a mano, porque el provider no consulta la cuenta."
-  type        = string
-}
+data "aws_caller_identity" "current" {}
 
 variable "alert_email" {
   description = "Mail que recibe las alertas de seguridad."
@@ -37,7 +11,7 @@ variable "alert_email" {
 
 locals {
   trail_name = "vfx-audit-trail"
-  trail_arn  = "arn:aws:cloudtrail:us-east-1:${var.account_id}:trail/vfx-audit-trail"
+  trail_arn  = "arn:aws:cloudtrail:us-east-2:${data.aws_caller_identity.current.account_id}:trail/vfx-audit-trail"
 
   common_tags = {
     proyecto     = "pipeline-vfx"
@@ -92,7 +66,7 @@ resource "aws_s3_bucket_policy" "audit_logs" {
         Effect    = "Allow"
         Principal = { Service = "cloudtrail.amazonaws.com" }
         Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.audit_logs.arn}/AWSLogs/${var.account_id}/*"
+        Resource  = "${aws_s3_bucket.audit_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
         Condition = {
           StringEquals = {
             "s3:x-amz-acl" = "bucket-owner-full-control"
@@ -203,7 +177,7 @@ resource "aws_cloudtrail" "audit" {
 variable "enable_security_alarms" {
   description = "Interruptor de la segunda tanda (metric filters + alarmas). Apagado en Floci (no soporta DescribeMetricFilters), encendido en AWS real."
   type        = bool
-  default     = false
+  default     = true
 }
 # --- Alarma 1: accesos denegados (IP fuera de la VPN + Artista/Lead fuera de horario) ---
 # Ambos casos los genera la politica de IAM como un evento con errorCode de tipo
@@ -378,7 +352,7 @@ resource "aws_iam_role_policy" "horario_lambda" {
       {
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"]
-        Resource = "arn:aws:logs:us-east-1:${var.account_id}:log-group:/aws/lambda/vfx-horario-alarma:*"
+        Resource = "arn:aws:logs:us-east-2:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-horario-alarma:*"
       },
       {
         Effect   = "Allow"
