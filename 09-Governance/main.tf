@@ -1,33 +1,8 @@
-variable "aws_access_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "aws_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.aws_access_key
-  secret_key                  = var.aws_secret_key
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-
-  endpoints {
-    s3            = "http://localhost:4566"
-    iam           = "http://localhost:4566"
-    configservice = "http://localhost:4566"
-    guardduty     = "http://localhost:4566"
-  }
+  region = "us-east-2"
 }
 
-variable "account_id" {
-  description = "ID de la cuenta (ficticia en Floci). Se usa para armar ARNs a mano, porque el provider no consulta la cuenta."
-  type        = string
-}
+data "aws_caller_identity" "current" {}
 
 locals {
   common_tags = {
@@ -96,7 +71,7 @@ resource "aws_s3_bucket_policy" "config_logs" {
         Effect    = "Allow"
         Principal = { Service = "config.amazonaws.com" }
         Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.config_logs.arn}/AWSLogs/${var.account_id}/Config/*"
+        Resource  = "${aws_s3_bucket.config_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/Config/*"
         Condition = {
           StringEquals = { "s3:x-amz-acl" = "bucket-owner-full-control" }
         }
@@ -136,8 +111,14 @@ resource "aws_iam_role_policy" "config_s3" {
         Action   = ["s3:PutObject", "s3:GetBucketAcl"]
         Resource = [
           aws_s3_bucket.config_logs.arn,
-          "${aws_s3_bucket.config_logs.arn}/AWSLogs/${var.account_id}/Config/*"
+          "${aws_s3_bucket.config_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/Config/*"
         ]
+      },
+      {
+        Sid      = "ConfigReadS3Configuration"
+        Effect   = "Allow"
+        Action   = ["s3:Get*", "s3:ListAllMyBuckets"]
+        Resource = "*"
       }
     ]
   })
@@ -148,6 +129,12 @@ resource "aws_iam_role_policy" "config_s3" {
 resource "aws_config_configuration_recorder" "main" {
   name     = "vfx-config-recorder"
   role_arn = aws_iam_role.config.arn
+
+  # Solo buckets de S3: es lo unico que evaluan las 3 reglas de abajo
+  recording_group {
+    all_supported = false
+    resource_types = ["AWS::S3::Bucket"]
+  }
 }
 
 resource "aws_config_delivery_channel" "main" {
@@ -201,15 +188,18 @@ resource "aws_config_config_rule" "s3_versioning_enabled" {
 
   depends_on = [aws_config_configuration_recorder_status.main]
 }
-resource "aws_guardduty_detector" "main" {
-  enable                       = true
-  finding_publishing_frequency = "FIFTEEN_MINUTES"
-
-  tags = local.common_tags
-}
-
-resource "aws_guardduty_detector_feature" "s3_data_events" {
-  detector_id = aws_guardduty_detector.main.id
-  name        = "S3_DATA_EVENTS"
-  status      = "ENABLED"
-}
+# --- GuardDuty: NO desplegado en la cuenta real ---
+# La SCP de la Organizacion niega guardduty:CreateDetector (verificado el
+# 30 de octubre de 2026). En una cuenta sin esa restriccion se agrega:
+#
+# resource "aws_guardduty_detector" "main" {
+#   enable                       = true
+#   finding_publishing_frequency = "FIFTEEN_MINUTES"
+#   tags                         = local.common_tags
+# }
+#
+# resource "aws_guardduty_detector_feature" "s3_data_events" {
+#   detector_id = aws_guardduty_detector.main.id
+#   name        = "S3_DATA_EVENTS"
+#   status      = "ENABLED"
+# }
