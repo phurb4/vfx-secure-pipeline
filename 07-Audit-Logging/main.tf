@@ -279,9 +279,8 @@ data "archive_file" "horario_lambda" {
       import os
       import boto3
 
-      sns = boto3.client("sns")
+      cloudwatch = boto3.client("cloudwatch")
 
-      TOPIC_ARN = os.environ["TOPIC_ARN"]
       HORA_INICIO = int(os.environ.get("HORA_INICIO", "9"))
       HORA_FIN = int(os.environ.get("HORA_FIN", "18"))
 
@@ -292,10 +291,16 @@ data "archive_file" "horario_lambda" {
           if payload.get("messageType") == "CONTROL_MESSAGE":
               return
 
+          cantidad = 0
           for registro in payload["logEvents"]:
               try:
                   evento = json.loads(registro["message"])
               except json.JSONDecodeError:
+                  continue
+
+              identidad = evento.get("userIdentity", {})
+              # Ignorar llamadas hechas por servicios de AWS (Config, CloudTrail, etc.)
+              if identidad.get("invokedBy") or identidad.get("type") == "AWSService":
                   continue
 
               event_time = evento.get("eventTime", "")
@@ -306,17 +311,18 @@ data "archive_file" "horario_lambda" {
                   continue
 
               if hora < HORA_INICIO or hora >= HORA_FIN:
-                  usuario = evento.get("userIdentity", {}).get("arn", "desconocido")
-                  sns.publish(
-                      TopicArn=TOPIC_ARN,
-                      Subject="VFX: acceso fuera de horario",
-                      Message=(
-                          f"Acceso fuera de horario laboral.\n"
-                          f"Usuario: {usuario}\n"
-                          f"Hora UTC del evento: {event_time}\n"
-                          f"Accion: {evento.get('eventName', 'desconocida')}"
-                      ),
-                  )
+                  cantidad += 1
+                  print(json.dumps({
+                      "usuario": identidad.get("arn", "desconocido"),
+                      "hora_utc": event_time,
+                      "accion": evento.get("eventName", "desconocida"),
+                  }))
+
+          if cantidad:
+              cloudwatch.put_metric_data(
+                  Namespace="VFX/Seguridad",
+                  MetricData=[{"MetricName": "AccesoFueraDeHorario", "Value": cantidad, "Unit": "Count"}],
+              )
           return {"statusCode": 200}
     PYTHON
   }
@@ -355,9 +361,10 @@ resource "aws_iam_role_policy" "horario_lambda" {
         Resource = "arn:aws:logs:us-east-2:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/vfx-horario-alarma:*"
       },
       {
-        Effect   = "Allow"
-        Action   = "sns:Publish"
-        Resource = aws_sns_topic.security_alerts.arn
+        Effect    = "Allow"
+        Action    = "cloudwatch:PutMetricData"
+        Resource  = "*"
+        Condition = { StringEquals = { "cloudwatch:namespace" = "VFX/Seguridad" } }
       }
     ]
   })
@@ -402,6 +409,24 @@ resource "aws_cloudwatch_log_subscription_filter" "horario" {
   destination_arn = aws_lambda_function.horario_alarma[0].arn
 
   depends_on = [aws_lambda_permission.horario_desde_logs]
+}
+resource "aws_cloudwatch_metric_alarm" "fuera_de_horario" {
+  count = var.enable_security_alarms ? 1 : 0
+
+  alarm_name          = "vfx-acceso-fuera-de-horario"
+  alarm_description   = "Hubo acceso de personas o roles fuera del horario laboral (12-21 UTC). Detalle: logs de la Lambda vfx-horario-alarma."
+  namespace           = "VFX/Seguridad"
+  metric_name         = "AccesoFueraDeHorario"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.security_alerts.arn]
+
+  tags = local.common_tags
 }
 # --- Alarma 4: falla de la Lambda vfx-horario ---
 # Si vfx-horario falla a la hora de cierre, el acceso de Artista y Lead queda abierto
