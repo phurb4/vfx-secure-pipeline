@@ -203,3 +203,59 @@ resource "aws_config_config_rule" "s3_versioning_enabled" {
 #   name        = "S3_DATA_EVENTS"
 #   status      = "ENABLED"
 # }
+
+
+# --- Presupuesto mensual (antes creado a mano en la consola) ---
+# Se importo a Terraform sin recrearlo. Avisa por mail al llegar al 85 % y al 100 %
+# del gasto real, y cuando el pronostico supere el 100 % de 20 USD.
+
+variable "budget_emails" {
+  description = "Mails que reciben los avisos del presupuesto (lista)."
+  type        = list(string)
+}
+
+resource "aws_budgets_budget" "mensual" {
+  name             = "vfx-budget-mensual"
+  budget_type      = "COST"
+  limit_amount     = "20"
+  limit_unit       = "USD"
+  time_unit        = "MONTHLY"
+  metrics          = ["UnblendedCost"]
+  billing_view_arn = "arn:aws:billing::${data.aws_caller_identity.current.account_id}:billingview/primary"
+
+  # Excluye creditos y reembolsos: mide el gasto real, no el neto de creditos
+  filter_expression {
+    not {
+      dimensions {
+        key    = "RECORD_TYPE"
+        values = ["Credit", "Refund"]
+      }
+    }
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 85
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = var.budget_emails
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = var.budget_emails
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = var.budget_emails
+  }
+
+  tags = local.common_tags
+}
