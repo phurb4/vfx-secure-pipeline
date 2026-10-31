@@ -9,6 +9,6 @@ variable "dailies_bucket" {
 }
 variable "s3_endpoint" {
   type        = string
-  default     = "http://localhost.floci.io:4566"
-  description = "Direccion de S3 que usa la Lambda. En Floci es la de Floci; en AWS real va vacia."
+  default     = ""
+  description = "Direccion de S3 que usa la Lambda. Vacia en AWS real (usa el endpoint normal); en Floci era http://localhost.floci.io:4566."
 }
