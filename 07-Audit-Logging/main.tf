@@ -189,7 +189,7 @@ resource "aws_cloudwatch_log_metric_filter" "accesos_denegados" {
   name           = "vfx-accesos-denegados"
   log_group_name = aws_cloudwatch_log_group.cloudtrail.name
 
-  pattern = "{ ($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\") }"
+  pattern = "{ (($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\")) && (($.userIdentity.sessionContext.sessionIssuer.userName != \"vfx-config-role\") || ($.userIdentity.sessionContext.sessionIssuer.userName NOT EXISTS)) }"
 
   metric_transformation {
     name          = "AccesosDenegados"
