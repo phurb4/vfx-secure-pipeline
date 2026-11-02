@@ -169,6 +169,18 @@ data "aws_iam_policy_document" "artista_policy" {
       values   = [data.terraform_remote_state.network.outputs.vpc_id]
     }
   }
+  statement {
+    sid         = "ExigirMFA"
+    effect      = "Deny"
+    not_actions = ["sts:GetSessionToken"]
+    resources   = ["*"]
+
+    condition {
+      test     = "BoolIfExists"
+      variable = "aws:MultiFactorAuthPresent"
+      values   = ["false"]
+    }
+  }
 }
 
 resource "aws_iam_policy" "artista_policy" {
@@ -200,6 +212,18 @@ data "aws_iam_policy_document" "lead_policy" {
       test     = "StringNotEqualsIfExists"
       variable = "aws:SourceVpc"
       values   = [data.terraform_remote_state.network.outputs.vpc_id]
+    }
+  }
+  statement {
+    sid         = "ExigirMFA"
+    effect      = "Deny"
+    not_actions = ["sts:GetSessionToken"]
+    resources   = ["*"]
+
+    condition {
+      test     = "BoolIfExists"
+      variable = "aws:MultiFactorAuthPresent"
+      values   = ["false"]
     }
   }
 }
@@ -304,7 +328,7 @@ data "aws_iam_policy_document" "supervisor_vfx_general_policy" {
   statement {
     sid       = "ExigirMFASiIPDistinta"
     effect    = "Deny"
-    actions   = ["*"]
+    not_actions = ["sts:GetSessionToken"]
     resources = ["*"]
 
     condition {

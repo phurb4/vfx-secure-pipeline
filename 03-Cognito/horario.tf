@@ -235,7 +235,7 @@ data "aws_iam_policy_document" "supervisor_mfa" {
   statement {
     sid       = "ExigirMFAFueraDeHorario"
     effect    = "Deny"
-    actions   = ["*"]
+    not_actions = ["sts:GetSessionToken"]
     resources = ["*"]
 
     condition {
