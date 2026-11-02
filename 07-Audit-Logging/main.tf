@@ -283,7 +283,7 @@ data "archive_file" "horario_lambda" {
 
       HORA_INICIO = int(os.environ.get("HORA_INICIO", "9"))
       HORA_FIN = int(os.environ.get("HORA_FIN", "18"))
-      IGNORAR_ROLES = os.environ.get("IGNORAR_ROLES", "vfx-horario-lambda-role").split(",")
+      IGNORAR_ROLES = os.environ.get("IGNORAR_ROLES", "vfx-horario-lambda-role,vfx-lambda-overtime-role").split(",")
 
       def handler(event, context):
           comprimido = base64.b64decode(event["awslogs"]["data"])
