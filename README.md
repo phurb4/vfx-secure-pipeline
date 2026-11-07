@@ -1,71 +1,100 @@
-# VFX Secure Pipeline
+🎬 VFX Secure Pipeline
+A security-first cloud pipeline for a VFX studio, built as code on AWS.
 
-Infrastructure as Code for a VFX production pipeline, with security built into every layer of the workflow (DevSecOps).
-Built with Terraform on AWS, tested first against a local AWS emulator (Floci: https://floci.io/aws/) before deployment to a real account.
+Imagine a VFX studio where artists upload work, supervisors review and approve it, and finished shots reach the client, all without a single file leaving a controlled, audited environment. This project builds that whole journey as code, with security at every step instead of added at the end.
 
-## What this project does
+💡 In plain words: it's the digital backbone of a studio. It decides who can touch which file, when, and from where, and it raises an alarm when something looks wrong.
+Portfolio project by Diego Ortiz. Built with Terraform on AWS (free tier plus a $100 credit account).
 
-A VFX studio needs to move an asset from the moment an artist uploads it to the moment a client approves the final delivery, across six production departments:
-Modeling, Texturing, Rigging, Animation, FX, and Compositing, followed by Final Render and Client Review.
-This repository implements that entire flow as versioned infrastructure code, with identity, network, and audit controls layered on top rather than bolted on afterward.
-I designed the architecture and made every decision in this repository myself, but I'm new to writing infrastructure code.
-I used Claude AI to generate the Terraform code and commands, which I then ran, tested, and debugged myself against Floci before anything touched AWS.
+🧭 How this project was built
+1. Phase 1, local: the whole design was first built and tested against Floci, a local AWS emulator, so mistakes cost nothing. That work lives in the main branch and is closed.
+2. Phase 2, real AWS (this branch, aws-real): the same design was deployed to a real AWS account, adapted to what a real account actually allows, and tested with real test users.
 
-## Roadmap: nine blocks, all built and verified against Floci
+🤖 Transparency: I designed the architecture and made every decision, but I'm new to writing infrastructure code. I used Claude (AI) to generate the Terraform and commands, then ran, tested and debugged everything myself.
 
-✅ 01. Network — VPC, per-department subnets, VPN, NACLs, Security Groups
-Each department gets its own isolated subnet, so an artist in one department can't reach another department's resources. VPN simulates remote access to the studio's internal network, and NACLs add a second defense layer on top of Security Groups.
+## 🗺️ Architecture
 
-✅ 02. Storage — S3 + DynamoDB, versioning, encryption
-S3 holds the actual files (Input/Output/Dailies) with native versioning so nothing gets silently overwritten. DynamoDB keeps a human-readable record of each version: who uploaded it, when, and its approval status. Version numbers are assigned automatically by Lambda, never by hand.
+![VFX Secure Pipeline architecture diagram](Architecture.png)
 
-✅ 03. Identity — Cognito with MFA, IAM with time and IP-based access policies
-Three separate Cognito user pools (internal team, clients, guests) with mandatory MFA for staff. IAM policies restrict access by role, time of day, and source IP, with supervisors stepping up with extra MFA instead of being hard-blocked after hours.
-
-✅ 04. Automation — Step Functions, SNS, Lambda with FFmpeg
-Step Functions orchestrates the full approval journey of an asset in one visible workflow, instead of loose Lambdas calling each other. The FFmpeg Lambda burns in timecode and frame number for review, and SNS notifies supervisors when something needs attention.
-
-✅ 05. SQS — render job queue
-Approved shots headed to final render get dropped into a queue. This decouples the approval workflow from the render farm, so render capacity scales independently of how many artists are working.
-
-✅ 06. Render Farm — EC2 Spot Instances, Auto Scaling Group
-EC2 Spot Instances handle the heavy, sustained compute that rendering needs, something Lambda isn't built for. The Auto Scaling Group watches the queue and spins instances up or down automatically, so there's zero cost sitting idle.
-
-✅ 07. Audit Logging — CloudTrail, CloudWatch alarms
-CloudTrail logs every action taken in the account, and CloudWatch watches those logs for specific patterns. Three alarms catch unusual downloads, off-hours activity, and access attempts from unrecognized IPs.
-
-✅ 08. Client Review — CloudFront signed URLs, guest access
-Clients see final deliveries through short-lived signed URLs, with no need for their own AWS account or direct bucket access. A separate read-only guest role lets recruiters or interviewers view the environment safely, with one-time email login.
-
-✅ 09. Governance — AWS Config, GuardDuty
-AWS Config checks the infrastructure against rules like "no public buckets allowed," and GuardDuty watches for threats. Budgets and resource tagging keep spending visible and broken down by department.
-
-All nine blocks are applied against Floci, including the full replication of this pattern across all six production departments (Modeling, Texturing, Rigging, Animation, FX, Compositing).
-
-## Architecture overview
-
-Network sets up the VPC with one subnet per department. Storage provisions versioned, encrypted S3 buckets and DynamoDB tables for asset metadata.
-Cognito handles identity for internal staff, external clients, and read-only guests, with mandatory MFA.
-Automation orchestrates the approval workflow with Step Functions, Lambda, and SNS. SQS queues render jobs.
-Render Farm runs EC2 Spot Instances in an Auto Scaling Group driven by queue depth.
-Audit Logging wires CloudTrail into CloudWatch with custom security alarms.
-Client Review serves final deliveries through CloudFront with signed URLs.
-Governance adds AWS Config and GuardDuty.
-
-Each tool choice is documented with the alternatives considered and the reasoning behind the decision.
-
-## FFmpeg binaries (not included in this repository)
-
-The Automation block (04-Automation) uses an FFmpeg Lambda layer to burn the company logo, timecode, and absolute frame number onto review videos.
-The FFmpeg binaries themselves are not tracked in this repository, because they are large compiled files (over 100 MB) that GitHub does not accept, and because they can always be re-downloaded from their public source rather than stored as code.
-
-Before deploying the Automation block against a real AWS account, rebuild the layer locally:
-
-1. Download a static FFmpeg build for Linux x86_64 from the BtbN FFmpeg builds project, since AWS Lambda runs on Amazon Linux.
-2. Extract the archive and copy the `ffmpeg` binary into a folder structure matching `ffmpeg-layer/bin/ffmpeg`, which is the path AWS Lambda layers expect.
-3. Compress that `ffmpeg-layer` folder into `ffmpeg-layer.zip`.
-4. Place the resulting `ffmpeg-layer.zip` inside `04-Automation/layers/`, matching the path already referenced by the Terraform code in that block.
-
-Once the zip file is in place, `terraform plan` and `terraform apply` in `04-Automation` will pick it up automatically.
+*The numbered diagram follows an asset from the artist's upload to the client's approval.*
 
 
+🧱 The nine blocks
+Each block is described by what it does in the real AWS account.
+
+🌐 01 · Network
+One private network with a separate subnet and firewall (NACL) per department, plus security groups.
+💻 Technical: VPC, 6 department subnets + Render Final + Client Review, 6 NACLs, 8 security groups, S3 and SQS endpoints.
+🚀 Designed and deployed. The access boundary I actually tested is identity-based (see block 03).
+
+🗄️ 02 · Storage
+Where the files and their records live. Files are versioned and encrypted; every version gets a readable record (who, when, status).
+💻 Technical: 15 S3 buckets (SSE-S3 encryption, public access blocked, versioning on input/output) and 7 DynamoDB tables.
+
+🔐 03 · Identity
+Who you are decides what you can touch. Four roles (Artist, Lead, Department Supervisor, VFX Supervisor), mandatory MFA, access limited by working hours and by office IP, and extra overtime permissions granted by a supervisor.
+💻 Technical: attribute-based access control (ABAC) with tags, no IAM groups (blocked by the organization), Cognito pools for staff, clients and guests, a scheduler Lambda for overtime.
+✅ Verified with real test users: IP restriction, ABAC, MFA for artists and supervisors, overtime tagging.
+
+⚙️ 04 · Automation
+The approval journey as one visible workflow instead of loose scripts: the supervisor's decision, version naming, notifications, and automatic review videos and images.
+💻 Technical: 7 Step Functions approval flows, SNS notifications, 7 Lambdas that generate dailies (video with FFmpeg, images).
+✅ Verified: all 7 flows and all 7 Lambdas run end to end. Approval flows are started manually by design.
+
+📬 05 · Queue
+Render jobs wait in line, so approval and rendering don't depend on each other.
+💻 Technical: SQS queue with a dead-letter queue.
+
+🖥️ 06 · Render Farm
+A scalable pool of render machines that turns on only when there is work.
+💻 Technical: launch template, Auto Scaling Group (desired 0), On-Demand instances because Spot is blocked by the organization.
+📐 Designed as a production pattern: the real render workload is not run here.
+✅ Verified: a real instance launch.
+
+🚨 07 · Audit & Alarms
+Every action is recorded, and alarms watch for suspicious patterns: off-hours activity, denied access, large downloads, function errors.
+💻 Technical: CloudTrail, CloudWatch metric filters and alarms, SNS alerts.
+⚠️ Declared limit: data events are logged for output and delivery buckets, not for input buckets.
+
+🎞️ 08 · Client Review
+Clients watch deliveries through short-lived signed links, with no AWS account needed. A read-only guest role lets recruiters look around safely.
+💻 Technical: CloudFront with signed URLs and a private bucket.
+🚀 Designed and deployed. Signed-URL generation is not yet tested on the real account.
+
+📊 09 · Governance & Cost
+Rules that check the infrastructure itself, and a budget that keeps spending visible.
+💻 Technical: AWS Config rules, a $20/month budget managed in Terraform, tagging.
+📐 Designed, not deployed: GuardDuty (blocked by the organization).
+
+| Status | What |
+|---|---|
+| ✅ **Verified on the real account** | IAM by tags (ABAC), MFA for artists and supervisors, IP restriction, supervisor working-hours rule, 7 approval flows, 7 dailies Lambdas, real render-farm instance launch, security alarms |
+| 🚀 **Deployed** | All nine blocks, per-department subnets and NACLs, client review with CloudFront, AWS Config |
+| 📐 **Designed** | Production render workload, GuardDuty, S3 locked to the private network, client review with a signed-URL end-to-end test |
+
+🧪 Real-account lessons
+A real account has guardrails you can't see until you hit them. This one sits under an organization policy (SCP) that blocks IAM groups, Spot instances and GuardDuty. The method: read the error, tell an organization block from my own policy, isolate it with a dry run, and keep the intended design in the code.
+
+🎥 Demo: remote workstation access
+Coming soon. The demo shows secure remote access for one department (FX), not the whole pipeline.
+
+⚠️ Declared limits
+
+1. Approval flows are triggered manually and don't validate S3 contents.
+2. The render farm is a design, not a production workload.
+3. Department subnets are deployed, but the tested access boundary is identity (IAM tags).
+4. CloudTrail data events are not enabled on input buckets.
+5. The external review tool for clients is not built in AWS.
+
+
+📦 FFmpeg binaries (not included)
+The video Lambdas use an FFmpeg layer. The binaries are over 100 MB, so they aren't in the repo. To rebuild:
+1. Download a static FFmpeg build for Linux x86_64 (BtbN FFmpeg Builds).
+2. Copy the ffmpeg binary to ffmpeg-layer/bin/ffmpeg.
+3. Zip the ffmpeg-layer folder as ffmpeg-layer.zip.
+4. Place it in 04-Automation/layers/, then run terraform plan and terraform apply.
+
+🛠️ Tools and why
+Each tool choice is documented with the alternatives considered and the reason behind it. Highlights: Terraform over CloudFormation (multi-cloud, portable skills), Lambda with FFmpeg over MediaConvert (cost), Step Functions over chained Lambdas (visibility), OpenVPN over WireGuard for the demo (real user accounts, corporate standard).
+
+📄 License MIT
