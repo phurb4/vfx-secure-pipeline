@@ -76,6 +76,7 @@ Rules that check the infrastructure itself, and a budget that keeps spending vis
 A real account has guardrails you can't see until you hit them. This one sits under an organization policy (SCP) that blocks IAM groups, Spot instances and GuardDuty. The method: read the error, tell an organization block from my own policy, isolate it with a dry run, and keep the intended design in the code.
 
 🎥 Demo: remote workstation access
+
 Coming soon. The demo shows secure remote access for one department (FX), not the whole pipeline.
 
 ⚠️ Declared limits
