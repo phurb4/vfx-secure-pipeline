@@ -639,6 +639,16 @@ resource "aws_iam_user" "prueba_supervisor_modelado" {
   }
 }
 
+resource "aws_iam_user" "prueba_artista_fx" {
+  name = "prueba-artista-fx"
+
+  tags = {
+    departamento = "fx"
+    rol          = "artista"
+    proyecto     = "pipeline-vfx"
+  }
+}
+
 # ===================================================================
 # ADJUNTOS FIJOS POR ROL (reemplazan a los grupos de IAM, ver arriba)
 # ===================================================================
@@ -674,6 +684,7 @@ locals {
     aws_iam_user.prueba_artista_animacion,
     aws_iam_user.prueba_supervisor_modelado,
     aws_iam_user.prueba_artista_render_final,
+    aws_iam_user.prueba_artista_fx,
   ]
 
   adjuntos_fijos = merge([
