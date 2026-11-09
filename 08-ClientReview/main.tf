@@ -42,8 +42,17 @@ resource "aws_s3_bucket_public_access_block" "cliente_entregas" {
 
 # Identidad de acceso de origen: asi CloudFront puede leer del bucket
 # sin que el bucket quede abierto a internet
+
 resource "aws_cloudfront_origin_access_identity" "cliente_oai" {
   comment = "OAI para entregas a cliente - vfx-cliente-entregas"
+}
+
+resource "aws_cloudfront_origin_access_control" "cliente_oac" {
+  name                              = "vfx-cliente-entregas-oac"
+  description                       = "OAC para entregas a cliente - vfx-cliente-entregas"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
 }
 
 data "aws_iam_policy_document" "cliente_entregas_policy" {
@@ -64,6 +73,39 @@ data "aws_iam_policy_document" "cliente_entregas_policy" {
     principals {
       type        = "AWS"
       identifiers = [aws_cloudfront_origin_access_identity.cliente_oai.iam_arn]
+    }
+  }
+    statement {
+    sid       = "AllowCloudFrontServicePrincipalGetObject"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.cliente_entregas.arn}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.cliente_dist.arn]
+    }
+  }
+
+  statement {
+    sid       = "AllowCloudFrontServicePrincipalListBucket"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.cliente_entregas.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.cliente_dist.arn]
     }
   }
 }
@@ -93,12 +135,9 @@ resource "aws_cloudfront_distribution" "cliente_dist" {
   comment = "Distribucion de Revision con Cliente - vfx-cliente-entregas"
 
   origin {
-    domain_name = aws_s3_bucket.cliente_entregas.bucket_regional_domain_name
-    origin_id   = "vfx-cliente-entregas-origin"
-
-    s3_origin_config {
-      origin_access_identity = aws_cloudfront_origin_access_identity.cliente_oai.cloudfront_access_identity_path
-    }
+    domain_name              = aws_s3_bucket.cliente_entregas.bucket_regional_domain_name
+    origin_id                = "vfx-cliente-entregas-origin"
+    origin_access_control_id = aws_cloudfront_origin_access_control.cliente_oac.id
   }
 
   default_cache_behavior {
